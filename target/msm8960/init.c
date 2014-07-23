@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2009, Google Inc.
  * All rights reserved.
- * Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -121,29 +121,40 @@ void target_init(void)
 	/* Keypad init */
 	keys_init();
 
-	if((platform_id == MSM8960)   ||
-	   (platform_id == MSM8960AB) ||
-	   (platform_id == APQ8060AB) ||
-	   (platform_id == MSM8260AB) ||
-	   (platform_id == MSM8660AB))
-	{
+	switch(platform_id) {
+	case MSM8960:
+	case MSM8960AB:
+	case APQ8060AB:
+	case MSM8260AB:
+	case MSM8660AB:
 		msm8960_keypad_init();
-	}
-	else if((platform_id == MSM8230)   ||
-			(platform_id == MSM8630)   ||
-			(platform_id == MSM8930)   ||
-			(platform_id == MSM8230AA) ||
-			(platform_id == MSM8630AA) ||
-			(platform_id == MSM8930AA))
-	{
+		break;
+	case MSM8130:
+	case MSM8230:
+	case MSM8630:
+	case MSM8930:
+	case MSM8130AA:
+	case MSM8230AA:
+	case MSM8630AA:
+	case MSM8930AA:
+	case MSM8930AB:
+	case MSM8630AB:
+	case MSM8230AB:
+	case MSM8130AB:
+	case APQ8030AB:
+	case APQ8030:
+	case APQ8030AA:
 		msm8930_keypad_init();
-	}
-	else if((platform_id == APQ8064) ||
-		    (platform_id == MPQ8064) ||
-		    (platform_id == APQ8064AB))
-	{
+		break;
+	case APQ8064:
+	case MPQ8064:
+	case APQ8064AA:
+	case APQ8064AB:
 		apq8064_keypad_init();
-	}
+		break;
+	default:
+		dprintf(CRITICAL,"Keyboard is not supported for platform: %d\n",platform_id);
+	};
 
 	/* Display splash screen if enabled */
 #if DISPLAY_SPLASH_SCREEN
@@ -161,7 +172,9 @@ void target_init(void)
 	if ((platform_id == MSM8960) || (platform_id == MSM8960AB) ||
 		(platform_id == APQ8060AB) || (platform_id == MSM8260AB) ||
 		(platform_id == MSM8660AB) || (platform_id == MSM8660A) ||
-		(platform_id == MSM8260A) || (platform_id == APQ8060A))
+		(platform_id == MSM8260A) || (platform_id == APQ8060A) ||
+		(platform_id == APQ8064) || (platform_id == APQ8064AA) ||
+		(platform_id == APQ8064AB))
 		/* Enable Hardware CE */
 		platform_ce_type = CRYPTO_ENGINE_TYPE_HW;
 
@@ -376,7 +389,7 @@ void target_uart_init(void)
 	case LINUX_MACHTYPE_8960_APQ:
 	case LINUX_MACHTYPE_8960_LIQUID:
 
-		if(board_baseband() == BASEBAND_SGLTE)
+		if(board_baseband() == BASEBAND_SGLTE || board_baseband() == BASEBAND_SGLTE2)
 		{
 			uart_dm_init(8, 0x1A000000, 0x1A040000);;
 		}
@@ -418,8 +431,6 @@ void target_uart_init(void)
 	default:
 		dprintf(CRITICAL, "uart gsbi not defined for target: %d\n",
 			target_id);
-
-		ASSERT(0);
 	}
 }
 
@@ -454,10 +465,14 @@ void target_detect(struct board_data *board)
 		default:
 			target_id = LINUX_MACHTYPE_8960_CDP;
 		}
-	} else if ((platform == MSM8230)   || (platform == MSM8630)   ||
+	} else if ((platform == MSM8130)           ||
+			   (platform == MSM8130AA) || (platform == MSM8130AB) ||
+			   (platform == MSM8230)   || (platform == MSM8630)   ||
 			   (platform == MSM8930)   || (platform == MSM8230AA) ||
 			   (platform == MSM8630AA) || (platform == MSM8930AA) ||
-			   (platform == APQ8030)) {
+			   (platform == MSM8930AB) || (platform == MSM8630AB) ||
+			   (platform == MSM8230AB) || (platform == APQ8030AB) ||
+			   (platform == APQ8030) || platform == APQ8030AA) {
 		switch (platform_hw) {
 		case HW_PLATFORM_SURF:
 			target_id = LINUX_MACHTYPE_8930_CDP;
@@ -468,10 +483,14 @@ void target_detect(struct board_data *board)
 		case HW_PLATFORM_FLUID:
 			target_id = LINUX_MACHTYPE_8930_FLUID;
 			break;
+		case HW_PLATFORM_QRD:
+			target_id = LINUX_MACHTYPE_8930_EVT;
+			break;
 		default:
 			target_id = LINUX_MACHTYPE_8930_CDP;
 		}
-	} else if ((platform == MSM8227) || (platform == MSM8627)) {
+	} else if ((platform == MSM8227) || (platform == MSM8627) ||
+			   (platform == MSM8227AA) || (platform == MSM8627AA)) {
 		switch (platform_hw) {
 		case HW_PLATFORM_SURF:
 			target_id = LINUX_MACHTYPE_8627_CDP;
@@ -496,7 +515,8 @@ void target_detect(struct board_data *board)
 		default:
 			target_id = LINUX_MACHTYPE_8064_MPQ_CDP;
 		}
-	} else if ((platform == APQ8064) || (platform == APQ8064AB)) {
+	} else if ((platform == APQ8064) || (platform == APQ8064AA)
+					 || (platform == APQ8064AB)) {
 		switch (platform_hw) {
 		case HW_PLATFORM_SURF:
 			target_id = LINUX_MACHTYPE_8064_CDP;
@@ -536,15 +556,28 @@ void target_baseband_detect(struct board_data *board)
 		baseband = BASEBAND_MDM;
 	else if (platform_subtype == HW_PLATFORM_SUBTYPE_SGLTE)
 		baseband = BASEBAND_SGLTE;
-	else if (platform == APQ8060)
-		baseband = BASEBAND_APQ;
-	else if ((platform == APQ8064) || (platform == APQ8064AB))
-		baseband = BASEBAND_APQ;
-	else if (platform == MPQ8064)
-		baseband = BASEBAND_APQ;
-	else
-		baseband = BASEBAND_MSM;
-
+	else if (platform_subtype == HW_PLATFORM_SUBTYPE_DSDA)
+		baseband = BASEBAND_DSDA;
+	else if (platform_subtype == HW_PLATFORM_SUBTYPE_DSDA2)
+		baseband = BASEBAND_DSDA2;
+	else if (platform_subtype == HW_PLATFORM_SUBTYPE_SGLTE2)
+		baseband = BASEBAND_SGLTE2;
+	else {
+		switch(platform) {
+		case APQ8060:
+		case APQ8064:
+		case APQ8064AA:
+		case APQ8064AB:
+		case APQ8030AB:
+		case MPQ8064:
+		case APQ8030:
+		case APQ8030AA:
+			baseband = BASEBAND_APQ;
+			break;
+		default:
+			baseband = BASEBAND_MSM;
+		};
+	}
 	board->baseband = baseband;
 }
 
@@ -587,4 +620,9 @@ void target_usb_init(void)
 	{
 			apq8064_ext_3p3V_enable();
 	}
+}
+
+int target_mmc_bus_width()
+{
+	return MMC_BOOT_BUS_WIDTH_8_BIT;
 }

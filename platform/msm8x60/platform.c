@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2008, Google Inc.
  * All rights reserved.
- * Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2010, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -148,10 +148,13 @@ void display_init(void)
 #if DISPLAY_TYPE_HDMI
 	struct hdmi_disp_mode_timing_type *hdmi_timing;
 	mdp_clock_init();
-	hdmi_display_init();
-	hdmi_timing = hdmi_common_init_panel_info();
-	fb_cfg = hdmi_dtv_init(hdmi_timing);
+	hdmi_power_init();
+	fb_cfg = get_fbcon();
+	hdmi_set_fb_addr(fb_cfg.base);
 	fbcon_setup(fb_cfg);
+	hdmi_dtv_init();
+	hdmi_dtv_on();
+	hdmi_msm_turn_on();
 #endif
 }
 

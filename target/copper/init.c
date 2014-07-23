@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,7 +39,8 @@
 #include <board.h>
 #include <smem.h>
 #include <baseband.h>
-
+#include <dev/keys.h>
+#include <pm8x41.h>
 
 static unsigned int target_id;
 
@@ -52,7 +53,53 @@ static uint32_t mmc_sdc_base[] =
 
 void target_early_init(void)
 {
+#if WITH_DEBUG_UART
 	uart_dm_init(0, 0, BLSP1_UART0_BASE);
+#endif
+}
+
+/* Return 1 if vol_up pressed */
+static int target_volume_up()
+{
+	uint8_t status = 0;
+	struct pm8x41_gpio gpio;
+
+	/* CDP vol_up seems to be always grounded. So gpio status is read as 0,
+	 * whether key is pressed or not.
+	 * Ignore volume_up key on CDP for now.
+	 */
+	if (board_hardware_id() == HW_PLATFORM_SURF)
+		return 0;
+
+	/* Configure the GPIO */
+	gpio.direction = PM_GPIO_DIR_IN;
+	gpio.function  = 0;
+	gpio.pull      = PM_GPIO_PULL_UP_30;
+	gpio.vin_sel   = 0;
+
+	pm8x41_gpio_config(5, &gpio);
+
+	/* Get status of P_GPIO_5 */
+	pm8x41_gpio_get(5, &status);
+
+	return !status; /* active low */
+}
+
+/* Return 1 if vol_down pressed */
+int target_volume_down()
+{
+	return pm8x41_vol_down_key_status();
+}
+
+static void target_keystatus()
+{
+	keys_init();
+
+	if(target_volume_down())
+		keys_post_event(KEY_VOLUMEDOWN, 1);
+
+	if(target_volume_up())
+		keys_post_event(KEY_VOLUMEUP, 1);
 }
 
 void target_init(void)
@@ -64,6 +111,8 @@ void target_init(void)
 	dprintf(INFO, "target_init()\n");
 
 	spmi_init(PMIC_ARB_CHANNEL_NUM, PMIC_ARB_OWNER_ID);
+
+	target_keystatus();
 
 	/* Trying Slot 1*/
 	slot = 1;
@@ -89,7 +138,8 @@ unsigned board_machtype(void)
 /* Do any target specific intialization needed before entering fastboot mode */
 void target_fastboot_init(void)
 {
-
+	/* Set the BOOT_DONE flag in PM8921 */
+	pm8x41_set_boot_done();
 }
 
 /* Detect the target type */
@@ -106,4 +156,40 @@ void target_baseband_detect(struct board_data *board)
 		board->baseband = BASEBAND_MDM;
 	else
 		board->baseband = BASEBAND_MSM;
+}
+
+void target_serialno(unsigned char *buf)
+{
+	unsigned int serialno;
+	if (target_is_emmc_boot()) {
+		serialno = mmc_get_psn();
+		snprintf((char *)buf, 13, "%x", serialno);
+	}
+}
+
+unsigned check_reboot_mode(void)
+{
+	uint32_t restart_reason = 0;
+
+	/* Read reboot reason and scrub it */
+	restart_reason = readl(RESTART_REASON_ADDR);
+	writel(0x00, RESTART_REASON_ADDR);
+
+	return restart_reason;
+}
+
+void reboot_device(unsigned reboot_reason)
+{
+	/* Write the reboot reason */
+	writel(reboot_reason, RESTART_REASON_ADDR);
+
+	/* Configure PMIC for warm reset */
+	pm8x41_reset_configure(PON_PSHOLD_WARM_RESET);
+
+	/* Drop PS_HOLD for MSM */
+	writel(0x00, MPM2_MPM_PS_HOLD);
+
+	mdelay(5000);
+
+	dprintf(CRITICAL, "Rebooting failed\n");
 }

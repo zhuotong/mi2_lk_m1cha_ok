@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
 
  * Redistribution and use in source and binary forms, with or without
@@ -10,7 +10,7 @@
  *     copyright notice, this list of conditions and the following
  *     disclaimer in the documentation and/or other materials provided
  *     with the distribution.
- *   * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *   * Neither the name of The Linux Foundation nor the names of its
  *     contributors may be used to endorse or promote products derived
  *     from this software without specific prior written permission.
  *
@@ -39,7 +39,7 @@ char *vfat_partitions[] = { "modem", "mdm", "NONE" };
 unsigned int ext3_count = 0;
 unsigned int vfat_count = 0;
 
-struct partition_entry partition_entries[NUM_PARTITIONS];
+struct partition_entry *partition_entries;
 unsigned gpt_partitions_exist = 0;
 unsigned partition_count = 0;
 
@@ -49,6 +49,10 @@ partition_read_table(struct mmc_boot_host *mmc_host,
 		     struct mmc_boot_card *mmc_card)
 {
 	unsigned int ret;
+
+	/* Allocate partition entries array */
+	partition_entries = (struct partition_entry *) calloc(NUM_PARTITIONS, sizeof(struct partition_entry));
+	ASSERT(partition_entries);
 
 	/* Read MBR of the card */
 	ret = mmc_boot_read_mbr(mmc_host, mmc_card);

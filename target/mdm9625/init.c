@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -10,7 +10,7 @@
  *       copyright notice, this list of conditions and the following
  *       disclaimer in the documentation and/or other materials provided
  *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *     * Neither the name of The Linux Foundation nor the names of its
  *       contributors may be used to endorse or promote products derived
  *       from this software without specific prior written permission.
  *
@@ -67,19 +67,6 @@ unsigned board_machtype(void)
 /* Identify the current target */
 void target_detect(struct board_data *board)
 {
-	switch(board->platform_hw)
-	{
-	case HW_PLATFORM_SURF:
-		board->target = LINUX_MACHTYPE_9625_CDP;
-		break;
-
-	case HW_PLATFORM_MTP:
-		board->target = LINUX_MACHTYPE_9625_MTP;
-		break;
-
-	default:
-		board->target = LINUX_MACHTYPE_9625_CDP;
-	}
 }
 
 /* Identify the baseband being used */

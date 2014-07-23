@@ -2,7 +2,7 @@
  * Copyright (c) 2009, Google Inc.
  * All rights reserved.
  *
- * Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -90,7 +90,9 @@ typedef enum
    PMIC_IS_PM8014,
    PMIC_IS_PM8821,
    PMIC_IS_PM8038,
-   PMIC_IS_INVALID,
+   PMIC_IS_PM8922,
+   PMIC_IS_PM8917,
+   PMIC_IS_INVALID = 0xffffffff,
 } pm_model_type;
 
 struct smem_board_info_v3 {
@@ -218,7 +220,7 @@ enum {
 	MSM8660A = 122,
 	MSM8260A = 123,
 	APQ8060A = 124,
-    MSM8974 = 126,
+	MSM8974 = 126,
 	MSM8225 = 127,
 	MSM8625 = 129,
 	MPQ8064 = 130,
@@ -240,6 +242,18 @@ enum {
 	MDM9225M  = 150,
 	MDM9625M  = 152,
 	APQ8064AB = 153, /* aka V2 PRIME */
+	MSM8930AB = 154,
+	MSM8630AB = 155,
+	MSM8230AB = 156,
+	APQ8030AB = 157,
+	APQ8030AA = 160,
+	MSM8125   = 167,
+	APQ8064AA = 172, /* aka V2 SLOW_PRIME */
+	MSM8130   = 179,
+	MSM8130AA = 180,
+	MSM8130AB = 181,
+	MSM8627AA = 182,
+	MSM8227AA = 183,
 };
 
 enum platform {
@@ -250,9 +264,11 @@ enum platform {
 	HW_PLATFORM_SVLTE = 4,
 	HW_PLATFORM_OEM = 5,
 	HW_PLATFORM_QT = 6,
+	HW_PLATFORM_MTP_MDM = 7,
 	HW_PLATFORM_MTP = 8,
 	HW_PLATFORM_LIQUID = 9,
 	HW_PLATFORM_DRAGON = 10,
+	HW_PLATFORM_QRD = 11,
 	HW_PLATFORM_HRD = 13,
 	HW_PLATFORM_DTV = 14,
     HW_PLATFORM_RUMI   = 15,
@@ -267,6 +283,9 @@ enum platform_subtype {
 	HW_PLATFORM_SUBTYPE_SVLTE1 = 2,
 	HW_PLATFORM_SUBTYPE_SVLTE2A = 3,
 	HW_PLATFORM_SUBTYPE_SGLTE = 6,
+	HW_PLATFORM_SUBTYPE_DSDA = 7,
+	HW_PLATFORM_SUBTYPE_DSDA2 = 8,
+	HW_PLATFORM_SUBTYPE_SGLTE2 = 9,
 	HW_PLATFORM_SUBTYPE_32BITS = 0x7FFFFFFF
 };
 
@@ -402,8 +421,30 @@ struct smem_ram_ptable {
 #define RESTART_EVENT_NORMAL	0x100000
 #define RESTART_EVENT_OTHER	0x200000
 
-unsigned smem_read_alloc_entry_offset(smem_mem_type_t type, void *buf, int len,
-				      int offset);
+#define SMEM_PTABLE_MAX_PARTS_V3  16
+#define SMEM_PTABLE_MAX_PARTS_V4  32
+#define SMEM_PTABLE_MAX_PARTS     SMEM_PTABLE_MAX_PARTS_V4
+
+#define SMEM_PTABLE_HDR_LEN    (4*sizeof(unsigned))
+
+struct smem_ptn {
+	char name[16];
+	unsigned start;
+	unsigned size;
+	unsigned attr;
+} __attribute__ ((__packed__));
+
+
+struct smem_ptable {
+#define _SMEM_PTABLE_MAGIC_1 0x55ee73aa
+#define _SMEM_PTABLE_MAGIC_2 0xe35ebddb
+	unsigned magic[2];
+	unsigned version;
+	unsigned len;
+	struct smem_ptn parts[SMEM_PTABLE_MAX_PARTS];
+} __attribute__ ((__packed__));
+
+unsigned smem_read_alloc_entry_offset(smem_mem_type_t type, void *buf, int len, int offset);
 int smem_ram_ptable_init(struct smem_ram_ptable *smem_ram_ptable);
 
 #endif				/* __PLATFORM_MSM_SHARED_SMEM_H */

@@ -2,7 +2,7 @@
  * Copyright (c) 2009, Google Inc.
  * All rights reserved.
  *
- * Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora nor
+ *     * Neither the name of The Linux Foundation nor
  *       the names of its contributors may be used to endorse or promote
  *       products derived from this software without specific prior written
  *       permission.
@@ -36,6 +36,7 @@
 #include <arch/arm.h>
 #include <dev/udc.h>
 #include <string.h>
+#include <limits.h>
 #include <kernel/thread.h>
 #include <arch/ops.h>
 
@@ -77,6 +78,12 @@
 #define EMMC_BOOT_IMG_HEADER_ADDR 0xFF000
 #endif
 
+#ifndef MEMSIZE
+#define MEMSIZE 1024*1024
+#endif
+
+#define MAX_TAGS_SIZE   1024
+
 #define RECOVERY_MODE   0x77665502
 #define FASTBOOT_MODE   0x77665500
 
@@ -105,6 +112,8 @@ struct dt_entry * get_device_tree_ptr(struct dt_table *);
 int update_device_tree(const void *, char *, void *, unsigned);
 #endif
 
+#define ADD_OF(a, b) (UINT_MAX - b > a) ? (a + b) : UINT_MAX
+
 static const char *emmc_cmdline = " androidboot.emmc=true";
 static const char *usb_sn_cmdline = " androidboot.serialno=";
 static const char *battchg_pause = " androidboot.mode=charger";
@@ -116,6 +125,9 @@ static const char *baseband_csfb    = " androidboot.baseband=csfb";
 static const char *baseband_svlte2a = " androidboot.baseband=svlte2a";
 static const char *baseband_mdm     = " androidboot.baseband=mdm";
 static const char *baseband_sglte   = " androidboot.baseband=sglte";
+static const char *baseband_dsda    = " androidboot.baseband=dsda";
+static const char *baseband_dsda2   = " androidboot.baseband=dsda2";
+static const char *baseband_sglte2  = " androidboot.baseband=sglte2";
 
 static const char *earlyprintk = DEBUGLEVEL > 1 ? " earlyprintk" : "";
 
@@ -235,6 +247,18 @@ unsigned char *update_cmdline(const char * cmdline)
 		case BASEBAND_SGLTE:
 			cmdline_len += strlen(baseband_sglte);
 			break;
+
+		case BASEBAND_SGLTE2:
+			cmdline_len += strlen(baseband_sglte2);
+			break;
+
+		case BASEBAND_DSDA:
+			cmdline_len += strlen(baseband_dsda);
+			break;
+
+		case BASEBAND_DSDA2:
+			cmdline_len += strlen(baseband_dsda2);
+			break;
 	}
 
 	if (cmdline_len > 0) {
@@ -329,6 +353,24 @@ unsigned char *update_cmdline(const char * cmdline)
 				if (have_cmdline) --dst;
 				while ((*dst++ = *src++));
 				break;
+
+			case BASEBAND_SGLTE2:
+				src = baseband_sglte2;
+				if (have_cmdline) --dst;
+				while ((*dst++ = *src++));
+				break;
+
+			case BASEBAND_DSDA:
+				src = baseband_dsda;
+				if (have_cmdline) --dst;
+				while ((*dst++ = *src++));
+				break;
+
+			case BASEBAND_DSDA2:
+				src = baseband_dsda2;
+				if (have_cmdline) --dst;
+				while ((*dst++ = *src++));
+				break;
 		}
 	}
 	return cmdline_final;
@@ -377,21 +419,15 @@ unsigned *atag_cmdline(unsigned *ptr, const char *cmdline)
 {
 	int cmdline_length = 0;
 	int n;
-	unsigned char *cmdline_final = NULL;
 	char *dest;
 
-	cmdline_final = update_cmdline(cmdline);
-	if (cmdline_final){
-		dprintf(INFO, "cmdline: %s\n", cmdline_final);
-	}
-
-	cmdline_length =strlen(cmdline_final);
+	cmdline_length = strlen((const char*)cmdline);
 	n = (cmdline_length + 4) & (~3);
 
 	*ptr++ = (n / 4) + 2;
 	*ptr++ = 0x54410009;
 	dest = (char *) ptr;
-	while (*dest++ = *cmdline_final++);
+	while ((*dest++ = *cmdline++));
 	ptr += (n / 4);
 
 	return ptr;
@@ -426,28 +462,42 @@ void generate_atags(unsigned *ptr, const char *cmdline,
 	ptr = atag_end(ptr);
 }
 
+typedef void entry_func_ptr(unsigned, unsigned, unsigned*);
 void boot_linux(void *kernel, unsigned *tags,
 		const char *cmdline, unsigned machtype,
 		void *ramdisk, unsigned ramdisk_size)
 {
+	unsigned char *final_cmdline;
+#if DEVICE_TREE
 	int ret = 0;
-	void (*entry)(unsigned, unsigned, unsigned*) = kernel;
+#endif
+
+	void (*entry)(unsigned, unsigned, unsigned*) = (entry_func_ptr*)(PA((addr_t)kernel));
+	uint32_t tags_phys = PA((addr_t)tags);
+
+	ramdisk = PA(ramdisk);
+
+	final_cmdline = update_cmdline((const char*)cmdline);
 
 #if DEVICE_TREE
+	dprintf(INFO, "Updating device tree: start\n");
+
 	/* Update the Device Tree */
-	ret = update_device_tree(tags, cmdline, ramdisk, ramdisk_size);
+	ret = update_device_tree((void *)tags, final_cmdline, ramdisk, ramdisk_size);
 	if(ret)
 	{
 		dprintf(CRITICAL, "ERROR: Updating Device Tree Failed \n");
 		ASSERT(0);
 	}
+
+	dprintf(INFO, "Updating device tree: done\n");
 #else
 	/* Generating the Atags */
-	generate_atags(tags, cmdline, ramdisk, ramdisk_size);
+	generate_atags(tags, final_cmdline, ramdisk, ramdisk_size);
 #endif
 
 	dprintf(INFO, "booting linux @ %p, ramdisk @ %p (%d)\n",
-		kernel, ramdisk, ramdisk_size);
+		entry, ramdisk, ramdisk_size);
 
 	enter_critical_section();
 	/* do any platform specific cleanup before kernel entry */
@@ -463,17 +513,41 @@ void boot_linux(void *kernel, unsigned *tags,
 	 * Will need to revisit to find the root cause.
 	 */
 	dsb();
+#if ARM_WITH_MMU
 	arch_disable_mmu();
-	entry(0, machtype, tags);
+#endif
+
+	entry(0, machtype, (unsigned*)tags_phys);
 }
 
 unsigned page_size = 0;
 unsigned page_mask = 0;
+/* Function to check if the memory address range falls within the aboot
+ * boundaries.
+ * start: Start of the memory region
+ * size: Size of the memory region
+ */
+int check_aboot_addr_range_overlap(uint32_t start, uint32_t size)
+{
+	/* Check for boundary conditions. */
+	if ((start + size) < start)
+		return -1;
+
+	/* Check for memory overlap. */
+	if ((start < MEMBASE) && ((start + size) <= MEMBASE))
+		return 0;
+	else if (start > (MEMBASE + MEMSIZE))
+		return 0;
+	else
+		return -1;
+}
 
 #define ROUND_TO_PAGE(x,y) (((x) + (y)) & (~(y)))
 
 static unsigned char buf[4096]; //Equal to max-supported pagesize
+#if DEVICE_TREE
 static unsigned char dt_buf[4096];
+#endif
 #define DUALBOOT_OFFSET_SECTORS 8	/* 4 pages, for recovery_message */
 
 static void check_boot_image(void)
@@ -515,13 +589,52 @@ out:
 		dual_boot_sign);
 }
 
+static void verify_signed_bootimg(uint32_t bootimg_addr, uint32_t bootimg_size)
+{
+	int ret;
+
+	/* Assume device is rooted at this time. */
+	device.is_tampered = 1;
+
+	dprintf(INFO, "Authenticating boot image (%d): start\n", bootimg_size);
+
+	ret = image_verify((unsigned char *)bootimg_addr,
+					   (unsigned char *)(bootimg_addr + bootimg_size),
+					   bootimg_size,
+					   CRYPTO_AUTH_ALG_SHA256);
+
+	dprintf(INFO, "Authenticating boot image: done return value = %d\n", ret);
+
+	if (ret)
+	{
+		/* Authorized kernel */
+		device.is_tampered = 0;
+	}
+
+#if USE_PCOM_SECBOOT
+	set_tamper_flag(device.is_tampered);
+#endif
+
+	if(device.is_tampered)
+	{
+		write_device_info_mmc(&device);
+	#ifdef TZ_TAMPER_FUSE
+		set_tamper_fuse_cmd();
+	#endif
+	#ifdef ASSERT_ON_TAMPER
+		dprintf(CRITICAL, "Device is tampered. Asserting..\n");
+		ASSERT(0);
+	#endif
+	}
+}
+
+
 int boot_linux_from_mmc(void)
 {
 	struct boot_img_hdr *hdr = (void*) buf;
 	struct boot_img_hdr *uhdr;
 	unsigned offset = 0;
 	unsigned long long ptn = 0;
-	unsigned n = 0;
 	const char *cmdline;
 	int index = INVALID_PTN;
 
@@ -530,7 +643,6 @@ int boot_linux_from_mmc(void)
 	unsigned ramdisk_actual;
 	unsigned imagesize_actual;
 	unsigned second_actual = 0;
-	unsigned dt_actual = 0;
 
 #if DEVICE_TREE
 	struct dt_table *table;
@@ -581,23 +693,66 @@ int boot_linux_from_mmc(void)
 		page_mask = page_size - 1;
 	}
 
-	/* Authenticate Kernel */
-	if(target_use_signed_kernel() && (!device.is_unlocked) && (!device.is_tampered))
-	{
-		image_addr = (unsigned char *)target_get_scratch_address();
-		kernel_actual = ROUND_TO_PAGE(hdr->kernel_size, page_mask);
-		ramdisk_actual = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
-		#if DEVICE_TREE
-		second_actual = ROUND_TO_PAGE(hdr->second_size, page_mask);
-		dt_actual = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
-		#endif
-		imagesize_actual = (page_size + kernel_actual + ramdisk_actual + second_actual +
-							dt_actual);
+	/* Get virtual addresses since the hdr saves physical addresses. */
+	hdr->kernel_addr = VA((addr_t)(hdr->kernel_addr));
+	hdr->ramdisk_addr = VA((addr_t)(hdr->ramdisk_addr));
+	hdr->tags_addr = VA((addr_t)(hdr->tags_addr));
 
+	kernel_actual  = ROUND_TO_PAGE(hdr->kernel_size,  page_mask);
+	ramdisk_actual = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
+		#if DEVICE_TREE
+		#endif
+
+	/* Check if the addresses in the header are valid. */
+	if (check_aboot_addr_range_overlap(hdr->kernel_addr, kernel_actual) ||
+		check_aboot_addr_range_overlap(hdr->ramdisk_addr, ramdisk_actual))
+	{
+		dprintf(CRITICAL, "kernel/ramdisk addresses overlap with aboot addresses.\n");
+		return -1;
+	}
+
+#ifndef DEVICE_TREE
+	if (check_aboot_addr_range_overlap(hdr->tags_addr, MAX_TAGS_SIZE))
+	{
+		dprintf(CRITICAL, "Tags addresses overlap with aboot addresses.\n");
+		return -1;
+	}
+#endif
+
+	/* Authenticate Kernel */
+	dprintf(INFO, "use_signed_kernel=%d, is_unlocked=%d, is_tampered=%d.\n",
+		(int) target_use_signed_kernel(),
+		device.is_unlocked,
+		device.is_tampered);
+
+	if(target_use_signed_kernel() && (!device.is_unlocked))
+	{
 		offset = 0;
 
-		/* Assuming device rooted at this time */
-		device.is_tampered = 1;
+		image_addr = (unsigned char *)target_get_scratch_address();
+
+#if DEVICE_TREE
+		dt_actual = ROUND_TO_PAGE(hdr->dt_size, page_mask);
+		imagesize_actual = (page_size + kernel_actual + ramdisk_actual + dt_actual);
+
+		if (check_aboot_addr_range_overlap(hdr->tags_addr, hdr->dt_size))
+		{
+			dprintf(CRITICAL, "Device tree addresses overlap with aboot addresses.\n");
+			return -1;
+		}
+#else
+		imagesize_actual = (page_size + kernel_actual + ramdisk_actual);
+#endif
+
+		dprintf(INFO, "Loading boot image (%d): start\n", imagesize_actual);
+
+		dprintf(INFO, "Loading boot image (%d): start\n", imagesize_actual);
+
+		if (check_aboot_addr_range_overlap(image_addr, imagesize_actual))
+		{
+			dprintf(CRITICAL, "Boot image buffer address overlaps with aboot addresses.\n");
+			return -1;
+		}
 
 		/* Read image without signature */
 		if (mmc_read(ptn + offset, (void *)image_addr, imagesize_actual))
@@ -606,25 +761,24 @@ int boot_linux_from_mmc(void)
 				return -1;
 		}
 
+		dprintf(INFO, "Loading boot image (%d): done\n", imagesize_actual);
+
 		offset = imagesize_actual;
+
+		if (check_aboot_addr_range_overlap(image_addr + offset, page_size))
+		{
+			dprintf(CRITICAL, "Signature read buffer address overlaps with aboot addresses.\n");
+			return -1;
+		}
+
 		/* Read signature */
 		if(mmc_read(ptn + offset, (void *)(image_addr + offset), page_size))
 		{
 			dprintf(CRITICAL, "ERROR: Cannot read boot image signature\n");
+			return -1;
 		}
-		else
-		{
-			auth_kernel_img = image_verify((unsigned char *)image_addr,
-					(unsigned char *)(image_addr + imagesize_actual),
-					imagesize_actual,
-					CRYPTO_AUTH_ALG_SHA256);
 
-			if(auth_kernel_img)
-			{
-				/* Authorized kernel */
-				device.is_tampered = 0;
-			}
-		}
+		verify_signed_bootimg(image_addr, imagesize_actual);
 
 		/* Move kernel, ramdisk and device tree to correct address */
 		memmove((void*) hdr->kernel_addr, (char *)(image_addr + page_size), hdr->kernel_size);
@@ -652,46 +806,50 @@ int boot_linux_from_mmc(void)
 				return -1;
 			}
 
-			/* Read device device tree in the "tags_add */
+			/* Validate and Read device device tree in the "tags_add */
+			if (check_aboot_addr_range_overlap(hdr->tags_addr, dt_entry_ptr->size))
+			{
+				dprintf(CRITICAL, "Device tree addresses overlap with aboot addresses.\n");
+				return -1;
+			}
+
 			memmove((void *)hdr->tags_addr, (char *)dt_table_offset + dt_entry_ptr->offset, dt_entry_ptr->size);
 		}
 		#endif
-		/* Make sure everything from scratch address is read before next step!*/
-		if(device.is_tampered)
-		{
-			write_device_info_mmc(&device);
-		#ifdef TZ_TAMPER_FUSE
-			set_tamper_fuse_cmd();
-		#endif
-		}
-	#if USE_PCOM_SECBOOT
-		set_tamper_flag(device.is_tampered);
-	#endif
 	}
 	else
 	{
-		offset += page_size;
+		second_actual  = ROUND_TO_PAGE(hdr->second_size,  page_mask);
 
-		n = ROUND_TO_PAGE(hdr->kernel_size, page_mask);
-		if (mmc_read(ptn + offset, (void *)hdr->kernel_addr, n)) {
+		dprintf(INFO, "Loading boot image (%d): start\n",
+				kernel_actual + ramdisk_actual);
+
+		offset = page_size;
+
+		/* Load kernel */
+		if (mmc_read(ptn + offset, (void *)hdr->kernel_addr, kernel_actual)) {
 			dprintf(CRITICAL, "ERROR: Cannot read kernel image\n");
 					return -1;
 		}
-		offset += n;
+		offset += kernel_actual;
 
-		n = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
-		if(n != 0)
+		/* Load ramdisk */
+		if(ramdisk_actual != 0)
 		{
-			if (mmc_read(ptn + offset, (void *)hdr->ramdisk_addr, n)) {
+			if (mmc_read(ptn + offset, (void *)hdr->ramdisk_addr, ramdisk_actual)) {
 				dprintf(CRITICAL, "ERROR: Cannot read ramdisk image\n");
 				return -1;
 			}
 		}
-		offset += n;
+		offset += ramdisk_actual;
+
+		dprintf(INFO, "Loading boot image (%d): done\n",
+				kernel_actual + ramdisk_actual);
 
 		if(hdr->second_size != 0) {
-			n = ROUND_TO_PAGE(hdr->second_size, page_mask);
-			offset += n;
+			offset += second_actual;
+			/* Second image loading not implemented. */
+			ASSERT(0);
 		}
 
 		#if DEVICE_TREE
@@ -719,11 +877,23 @@ int boot_linux_from_mmc(void)
 				return -1;
 			}
 
-			/* Read device device tree in the "tags_add */
-			hdr->tags_addr = 0x8400000;
+			/* Validate and Read device device tree in the "tags_add */
+			if (check_aboot_addr_range_overlap(hdr->tags_addr, dt_entry_ptr->size))
+			{
+				dprintf(CRITICAL, "Device tree addresses overlap with aboot addresses.\n");
+				return -1;
+			}
+
 			if(mmc_read(ptn + offset + dt_entry_ptr->offset,
 						 (void *)hdr->tags_addr, dt_entry_ptr->size)) {
 				dprintf(CRITICAL, "ERROR: Cannot read device tree\n");
+				return -1;
+			}
+
+			/* Validate the tags_addr */
+			if (check_aboot_addr_range_overlap(hdr->tags_addr, kernel_actual))
+			{
+				dprintf(CRITICAL, "Device tree addresses overlap with aboot addresses.\n");
 				return -1;
 			}
 		}
@@ -731,10 +901,6 @@ int boot_linux_from_mmc(void)
 	}
 
 unified_boot:
-	dprintf(INFO, "\nkernel  @ %x (%d bytes)\n", hdr->kernel_addr,
-		hdr->kernel_size);
-	dprintf(INFO, "ramdisk @ %x (%d bytes)\n", hdr->ramdisk_addr,
-		hdr->ramdisk_size);
 
 	if(hdr->cmdline[0]) {
 		cmdline = (char*) hdr->cmdline;
@@ -743,7 +909,6 @@ unified_boot:
 	}
 	dprintf(INFO, "cmdline = '%s'\n", cmdline);
 
-	dprintf(INFO, "\nBooting Linux\n");
 	boot_linux((void *)hdr->kernel_addr, (unsigned *) hdr->tags_addr,
 		   (const char *)cmdline, board_machtype(),
 		   (void *)hdr->ramdisk_addr, hdr->ramdisk_size);
@@ -754,7 +919,6 @@ unified_boot:
 int boot_linux_from_flash(void)
 {
 	struct boot_img_hdr *hdr = (void*) buf;
-	unsigned n;
 	struct ptentry *ptn;
 	struct ptable *ptable;
 	unsigned offset = 0;
@@ -764,6 +928,7 @@ int boot_linux_from_flash(void)
 	unsigned kernel_actual;
 	unsigned ramdisk_actual;
 	unsigned imagesize_actual;
+	unsigned second_actual;
 
 	if (target_is_emmc_boot()) {
 		hdr = (struct boot_img_hdr *)EMMC_BOOT_IMG_HEADER_ADDR;
@@ -812,18 +977,50 @@ int boot_linux_from_flash(void)
 		return -1;
 	}
 
+	/* Get virtual addresses since the hdr saves physical addresses. */
+	hdr->kernel_addr = VA((addr_t)(hdr->kernel_addr));
+	hdr->ramdisk_addr = VA((addr_t)(hdr->ramdisk_addr));
+	hdr->tags_addr = VA((addr_t)(hdr->tags_addr));
+
+	kernel_actual  = ROUND_TO_PAGE(hdr->kernel_size,  page_mask);
+	ramdisk_actual = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
+
+	/* Check if the addresses in the header are valid. */
+	if (check_aboot_addr_range_overlap(hdr->kernel_addr, kernel_actual) ||
+		check_aboot_addr_range_overlap(hdr->ramdisk_addr, ramdisk_actual))
+	{
+		dprintf(CRITICAL, "kernel/ramdisk addresses overlap with aboot addresses.\n");
+		return -1;
+	}
+
+#ifndef DEVICE_TREE
+		if (check_aboot_addr_range_overlap(hdr->tags_addr, MAX_TAGS_SIZE))
+		{
+			dprintf(CRITICAL, "Tags addresses overlap with aboot addresses.\n");
+			return -1;
+		}
+#endif
+
 	/* Authenticate Kernel */
-	if(target_use_signed_kernel() && (!device.is_unlocked) && (!device.is_tampered))
+	if(target_use_signed_kernel() && (!device.is_unlocked))
 	{
 		image_addr = (unsigned char *)target_get_scratch_address();
-		kernel_actual = ROUND_TO_PAGE(hdr->kernel_size, page_mask);
-		ramdisk_actual = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
-		imagesize_actual = (page_size + kernel_actual + ramdisk_actual);
-
 		offset = 0;
 
-		/* Assuming device rooted at this time */
-		device.is_tampered = 1;
+#if DEVICE_TREE
+		dt_actual = ROUND_TO_PAGE(hdr->dt_size, page_mask);
+		imagesize_actual = (page_size + kernel_actual + ramdisk_actual + dt_actual);
+
+		if (check_aboot_addr_range_overlap(hdr->tags_addr, hdr->dt_size))
+		{
+			dprintf(CRITICAL, "Device tree addresses overlap with aboot addresses.\n");
+			return -1;
+		}
+#else
+		imagesize_actual = (page_size + kernel_actual + ramdisk_actual);
+#endif
+
+		dprintf(INFO, "Loading boot image (%d): start\n", imagesize_actual);
 
 		/* Read image without signature */
 		if (flash_read(ptn, offset, (void *)image_addr, imagesize_actual))
@@ -832,31 +1029,31 @@ int boot_linux_from_flash(void)
 				return -1;
 		}
 
+		dprintf(INFO, "Loading boot image (%d): done\n", imagesize_actual);
+
 		offset = imagesize_actual;
 		/* Read signature */
 		if (flash_read(ptn, offset, (void *)(image_addr + offset), page_size))
 		{
 			dprintf(CRITICAL, "ERROR: Cannot read boot image signature\n");
+			return -1;
 		}
-		else
-		{
 
-			/* Verify signature */
-			auth_kernel_img = image_verify((unsigned char *)image_addr,
-						(unsigned char *)(image_addr + imagesize_actual),
-						imagesize_actual,
-						CRYPTO_AUTH_ALG_SHA256);
-
-			if(auth_kernel_img)
-			{
-				/* Authorized kernel */
-				device.is_tampered = 0;
-			}
-		}
+		verify_signed_bootimg(image_addr, imagesize_actual);
 
 		/* Move kernel and ramdisk to correct address */
 		memmove((void*) hdr->kernel_addr, (char *)(image_addr + page_size), hdr->kernel_size);
 		memmove((void*) hdr->ramdisk_addr, (char *)(image_addr + page_size + kernel_actual), hdr->ramdisk_size);
+#if DEVICE_TREE
+		/* Validate and Read device device tree in the "tags_add */
+		if (check_aboot_addr_range_overlap(hdr->tags_addr, dt_entry_ptr->size))
+		{
+			dprintf(CRITICAL, "Device tree addresses overlap with aboot addresses.\n");
+			return -1;
+		}
+
+		memmove((void*) hdr->tags_addr, (char *)(image_addr + page_size + kernel_actual + ramdisk_actual), hdr->dt_size);
+#endif
 
 		/* Make sure everything from scratch address is read before next step!*/
 		if(device.is_tampered)
@@ -871,25 +1068,78 @@ int boot_linux_from_flash(void)
 	{
 		offset = page_size;
 
-		n = ROUND_TO_PAGE(hdr->kernel_size, page_mask);
-		if (flash_read(ptn, offset, (void *)hdr->kernel_addr, n)) {
+		kernel_actual = ROUND_TO_PAGE(hdr->kernel_size, page_mask);
+		ramdisk_actual = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
+		second_actual = ROUND_TO_PAGE(hdr->second_size, page_mask);
+
+		dprintf(INFO, "Loading boot image (%d): start\n",
+				kernel_actual + ramdisk_actual);
+
+		if (flash_read(ptn, offset, (void *)hdr->kernel_addr, kernel_actual)) {
 			dprintf(CRITICAL, "ERROR: Cannot read kernel image\n");
 			return -1;
 		}
-		offset += n;
+		offset += kernel_actual;
 
-		n = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
-		if (flash_read(ptn, offset, (void *)hdr->ramdisk_addr, n)) {
+		if (flash_read(ptn, offset, (void *)hdr->ramdisk_addr, ramdisk_actual)) {
 			dprintf(CRITICAL, "ERROR: Cannot read ramdisk image\n");
 			return -1;
 		}
-		offset += n;
+		offset += ramdisk_actual;
+
+		dprintf(INFO, "Loading boot image (%d): done\n",
+				kernel_actual + ramdisk_actual);
+
+		if(hdr->second_size != 0) {
+			offset += second_actual;
+			/* Second image loading not implemented. */
+			ASSERT(0);
+		}
+
+#if DEVICE_TREE
+		if(hdr->dt_size != 0) {
+
+			/* Read the device tree table into buffer */
+			if(flash_read(ptn, offset, (void *) dt_buf, page_size)) {
+				dprintf(CRITICAL, "ERROR: Cannot read the Device Tree Table\n");
+				return -1;
+			}
+
+			table = (struct dt_table*) dt_buf;
+
+			/* Restriction that the device tree entry table should be less than a page*/
+			ASSERT(((table->num_entries * sizeof(struct dt_entry))+ DEV_TREE_HEADER_SIZE) < hdr->page_size);
+
+			/* Validate the device tree table header */
+			if((table->magic != DEV_TREE_MAGIC) && (table->version != DEV_TREE_VERSION)) {
+				dprintf(CRITICAL, "ERROR: Cannot validate Device Tree Table \n");
+				return -1;
+			}
+
+			/* Calculate the offset of device tree within device tree table */
+			if((dt_entry_ptr = dev_tree_get_entry_ptr(table)) == NULL){
+				dprintf(CRITICAL, "ERROR: Getting device tree address failed\n");
+				return -1;
+			}
+
+			/* Validate and Read device device tree in the "tags_add */
+			if (check_aboot_addr_range_overlap(hdr->tags_addr, dt_entry_ptr->size))
+			{
+				dprintf(CRITICAL, "Device tree addresses overlap with aboot addresses.\n");
+				return -1;
+			}
+
+			/* Read device device tree in the "tags_add */
+			if(flash_read(ptn, offset + dt_entry_ptr->offset,
+						 (void *)hdr->tags_addr, dt_entry_ptr->size)) {
+				dprintf(CRITICAL, "ERROR: Cannot read device tree\n");
+				return -1;
+			}
+		}
+#endif
+
 	}
 continue_boot:
-	dprintf(INFO, "\nkernel  @ %x (%d bytes)\n", hdr->kernel_addr,
-		hdr->kernel_size);
-	dprintf(INFO, "ramdisk @ %x (%d bytes)\n", hdr->ramdisk_addr,
-		hdr->ramdisk_size);
 
 	if(hdr->cmdline[0]) {
 		cmdline = (char*) hdr->cmdline;
@@ -900,7 +1150,6 @@ continue_boot:
 
 	/* TODO: create/pass atags to kernel */
 
-	dprintf(INFO, "\nBooting Linux\n");
 	boot_linux((void *)hdr->kernel_addr, (void *)hdr->tags_addr,
 		   (const char *)cmdline, board_machtype(),
 		   (void *)hdr->ramdisk_addr, hdr->ramdisk_size);
@@ -1070,11 +1319,78 @@ void set_device_root()
 	write_device_info(&device);
 }
 
+#if DEVICE_TREE
+int copy_dtb(uint8_t *boot_image_start)
+{
+	uint32 dt_image_offset = 0;
+	uint32_t n;
+	struct dt_table *table;
+	struct dt_entry *dt_entry_ptr;
+	unsigned dt_table_offset;
+
+	struct boot_img_hdr *hdr = (struct boot_img_hdr *) (boot_image_start);
+
+
+	if(hdr->dt_size != 0) {
+
+		/* add kernel offset */
+		dt_image_offset += page_size;
+		n = ROUND_TO_PAGE(hdr->kernel_size, page_mask);
+		dt_image_offset += n;
+
+		/* add ramdisk offset */
+		n = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
+		dt_image_offset += n;
+
+		/* add second offset */
+		if(hdr->second_size != 0) {
+			n = ROUND_TO_PAGE(hdr->second_size, page_mask);
+			dt_image_offset += n;
+		}
+
+		/* offset now point to start of dt.img */
+		table = boot_image_start + dt_image_offset;
+
+		/* Restriction that the device tree entry table should be less than a page*/
+		ASSERT(((table->num_entries * sizeof(struct dt_entry))+ DEV_TREE_HEADER_SIZE) < hdr->page_size);
+
+		/* Validate the device tree table header */
+		if((table->magic != DEV_TREE_MAGIC) && (table->version != DEV_TREE_VERSION)) {
+			dprintf(CRITICAL, "ERROR: Cannot validate Device Tree Table \n");
+			return -1;
+		}
+
+		/* Calculate the offset of device tree within device tree table */
+		if((dt_entry_ptr = get_device_tree_ptr(table)) == NULL){
+			dprintf(CRITICAL, "ERROR: Getting device tree address failed\n");
+			return -1;
+		}
+
+		/* Validate and Read device device tree in the "tags_add */
+		if (check_aboot_addr_range_overlap(hdr->tags_addr, dt_entry_ptr->size))
+		{
+			dprintf(CRITICAL, "Device tree addresses overlap with aboot addresses.\n");
+			return -1;
+		}
+
+		/* Read device device tree in the "tags_add */
+		memmove((void*) hdr->tags_addr,
+				boot_image_start + dt_image_offset +  dt_entry_ptr->offset,
+				dt_entry_ptr->size);
+	}
+
+	/* Everything looks fine. Return success. */
+	return 0;
+}
+#endif
+
 void cmd_boot(const char *arg, void *data, unsigned sz)
 {
 	unsigned kernel_actual;
 	unsigned ramdisk_actual;
-	static struct boot_img_hdr hdr;
+	uint32_t image_actual;
+	uint32_t dt_actual = 0;
+	struct boot_img_hdr *hdr;
 	char *ptr = ((char*) data);
 
 	if (sz < sizeof(hdr)) {
@@ -1082,27 +1398,91 @@ void cmd_boot(const char *arg, void *data, unsigned sz)
 		return;
 	}
 
-	memcpy(&hdr, data, sizeof(hdr));
+	hdr = (struct boot_img_hdr *)data;
 
 	/* ensure commandline is terminated */
-	hdr.cmdline[BOOT_ARGS_SIZE-1] = 0;
+	hdr->cmdline[BOOT_ARGS_SIZE-1] = 0;
 
-	if(target_is_emmc_boot() && hdr.page_size) {
-		page_size = hdr.page_size;
+	if(target_is_emmc_boot() && hdr->page_size) {
+		page_size = hdr->page_size;
 		page_mask = page_size - 1;
 	}
 
-	kernel_actual = ROUND_TO_PAGE(hdr.kernel_size, page_mask);
-	ramdisk_actual = ROUND_TO_PAGE(hdr.ramdisk_size, page_mask);
+	kernel_actual = ROUND_TO_PAGE(hdr->kernel_size, page_mask);
+	ramdisk_actual = ROUND_TO_PAGE(hdr->ramdisk_size, page_mask);
+#if DEVICE_TREE
+	dt_actual = ROUND_TO_PAGE(hdr->dt_size, page_mask);
+#endif
+
+	image_actual = ADD_OF(page_size, kernel_actual);
+	image_actual = ADD_OF(image_actual, ramdisk_actual);
+	image_actual = ADD_OF(image_actual, dt_actual);
 
 	/* sz should have atleast raw boot image */
-	if (page_size + kernel_actual + ramdisk_actual > sz) {
+	if (image_actual > sz) {
 		fastboot_fail("incomplete bootimage");
 		return;
 	}
 
-	memmove((void*) hdr.kernel_addr, ptr + page_size, hdr.kernel_size);
-	memmove((void*) hdr.ramdisk_addr, ptr + page_size + kernel_actual, hdr.ramdisk_size);
+	/* Verify the boot image
+	 * device & page_size are initialized in aboot_init
+	 */
+	if (target_use_signed_kernel() && (!device.is_unlocked))
+		verify_signed_bootimg((uint32_t)data, image_actual);
+
+	/* Get virtual addresses since the hdr saves physical addresses. */
+	hdr->kernel_addr = VA(hdr->kernel_addr);
+	hdr->ramdisk_addr = VA(hdr->ramdisk_addr);
+	hdr->tags_addr = VA(hdr->tags_addr);
+
+	/* Check if the addresses in the header are valid. */
+	if (check_aboot_addr_range_overlap(hdr->kernel_addr, kernel_actual) ||
+		check_aboot_addr_range_overlap(hdr->ramdisk_addr, ramdisk_actual))
+	{
+		dprintf(CRITICAL, "kernel/ramdisk addresses overlap with aboot addresses.\n");
+		return;
+	}
+
+#if DEVICE_TREE
+	/* find correct dtb and copy it to right location */
+	ret = copy_dtb(data);
+
+	dtb_copied = !ret ? 1 : 0;
+#else
+	if (check_aboot_addr_range_overlap(hdr->tags_addr, MAX_TAGS_SIZE))
+	{
+		dprintf(CRITICAL, "Tags addresses overlap with aboot addresses.\n");
+		return;
+	}
+#endif
+
+	/* Load ramdisk & kernel */
+	memmove((void*) hdr->ramdisk_addr, ptr + page_size + kernel_actual, hdr->ramdisk_size);
+	memmove((void*) hdr->kernel_addr, ptr + page_size, hdr->kernel_size);
+
+#if DEVICE_TREE
+	/*
+	 * If dtb is not found look for appended DTB in the kernel.
+	 * If appended dev tree is found, update the atags with
+	 * memory address to the DTB appended location on RAM.
+	 * Else update with the atags address in the kernel header
+	 */
+	if (!dtb_copied) {
+		void *dtb;
+		dtb = dev_tree_appended((void *)hdr->kernel_addr, (void *)hdr->tags_addr, hdr->kernel_size);
+		if (!dtb) {
+			fastboot_fail("dtb not found");
+			return;
+	}
+#endif
+
+#ifndef DEVICE_TREE
+	if (check_aboot_addr_range_overlap(hdr->tags_addr, MAX_TAGS_SIZE))
+	{
+		dprintf(CRITICAL, "Tags addresses overlap with aboot addresses.\n");
+		return;
+	}
+#endif
 
 	check_boot_image();
 
@@ -1110,9 +1490,12 @@ void cmd_boot(const char *arg, void *data, unsigned sz)
 	udc_stop();
 
 	pu_reason |= RESTART_EVENT_NORMAL;
-	boot_linux((void*) hdr.kernel_addr, (void*) hdr.tags_addr,
-		   (const char*) hdr.cmdline, board_machtype(),
-		   (void*) hdr.ramdisk_addr, hdr.ramdisk_size);
+	memmove((void*) hdr->ramdisk_addr, ptr + page_size + kernel_actual, hdr->ramdisk_size);
+	memmove((void*) hdr->kernel_addr, ptr + page_size, hdr->kernel_size);
+
+	boot_linux((void*) hdr->kernel_addr, (void*) hdr->tags_addr,
+		   (const char*) hdr->cmdline, board_machtype(),
+		   (void*) hdr->ramdisk_addr, hdr->ramdisk_size);
 }
 
 void cmd_erase(const char *arg, void *data, unsigned sz)
@@ -1521,6 +1904,8 @@ void aboot_init(const struct app_descriptor *app)
 		page_size = flash_page_size();
 		page_mask = page_size - 1;
 	}
+
+	ASSERT((MEMBASE + MEMSIZE) > MEMBASE);
 
 	if(target_use_signed_kernel())
 	{

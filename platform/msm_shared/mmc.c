@@ -1,5 +1,5 @@
-/* Copyright (c) 2010-2012, Code Aurora Forum. All rights reserved.
-
+/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
  * met:
@@ -9,7 +9,7 @@
  *     copyright notice, this list of conditions and the following
  *     disclaimer in the documentation and/or other materials provided
  *     with the distribution.
- *   * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *   * Neither the name of The Linux Foundation nor the names of its
  *     contributors may be used to endorse or promote products derived
  *     from this software without specific prior written permission.
  *
@@ -39,14 +39,21 @@
 #include "adm.h"
 #endif
 
+#if MMC_BOOT_BAM
+#include "bam.h"
+#include "mmc_dml.h"
+#endif
+
 #ifndef NULL
 #define NULL        0
 #endif
 
+#define USEC_PER_SEC           (1000000L)
+
 #define MMC_BOOT_DATA_READ     0
 #define MMC_BOOT_DATA_WRITE    1
 
-static unsigned int mmc_boot_fifo_data_transfer(unsigned int *data_ptr,
+static unsigned int mmc_boot_data_transfer(unsigned int *data_ptr,
 						unsigned int data_len,
 						unsigned char direction);
 
@@ -55,6 +62,32 @@ static unsigned int mmc_boot_fifo_read(unsigned int *data_ptr,
 
 static unsigned int mmc_boot_fifo_write(unsigned int *data_ptr,
 					unsigned int data_len);
+
+static unsigned int mmc_boot_status_error(unsigned mmc_status);
+
+#if MMC_BOOT_BAM
+
+void mmc_boot_dml_init();
+
+static void mmc_boot_dml_producer_trans_init(unsigned trans_end,
+										     unsigned size);
+
+static void mmc_boot_dml_consumer_trans_init();
+
+static uint32_t mmc_boot_dml_chk_producer_idle();
+
+static void mmc_boot_dml_wait_producer_idle();
+static void mmc_boot_dml_wait_consumer_idle();
+static void mmc_boot_dml_reset();
+static int mmc_bam_init(uint32_t bam_base);
+static int mmc_bam_transfer_data();
+static unsigned int
+mmc_boot_bam_setup_desc(unsigned int *data_ptr,
+			    unsigned int data_len, unsigned char direction);
+
+
+#endif
+
 
 #define ROUND_TO_PAGE(x,y) (((x) + (y)) & (~(y)))
 
@@ -78,6 +111,30 @@ unsigned int mmc_boot_mci_base = 0;
 static unsigned char ext_csd_buf[512];
 static unsigned char wp_status_buf[8];
 
+#if MMC_BOOT_BAM
+
+static uint32_t mmc_sdc_bam_base[] =
+	{ MSM_SDC1_BAM_BASE, MSM_SDC2_BAM_BASE, MSM_SDC3_BAM_BASE, MSM_SDC4_BAM_BASE };
+
+static uint32_t mmc_sdc_dml_base[] =
+	{ MSM_SDC1_DML_BASE, MSM_SDC2_DML_BASE, MSM_SDC3_DML_BASE, MSM_SDC4_DML_BASE };
+
+uint32_t dml_base;
+static struct bam_instance bam;
+
+#define MMC_BOOT_BAM_FIFO_SIZE           100
+
+#define MMC_BOOT_BAM_READ_PIPE_INDEX     0
+#define MMC_BOOT_BAM_WRITE_PIPE_INDEX    1
+
+#define MMC_BOOT_BAM_READ_PIPE           0
+#define MMC_BOOT_BAM_WRITE_PIPE          1
+
+/* Align at BAM_DESC_SIZE boundary */
+static struct bam_desc desc_fifo[MMC_BOOT_BAM_FIFO_SIZE] __attribute__ ((aligned(BAM_DESC_SIZE)));
+
+#endif
+
 int mmc_clock_enable_disable(unsigned id, unsigned enable);
 int mmc_clock_get_rate(unsigned id);
 int mmc_clock_set_rate(unsigned id, unsigned rate);
@@ -99,6 +156,17 @@ unsigned int SWAP_ENDIAN(unsigned int val)
 	return ((val & 0xFF) << 24) |
 	    (((val >> 8) & 0xFF) << 16) | (((val >> 16) & 0xFF) << 8) | (val >>
 									 24);
+}
+
+void mmc_mclk_reg_wr_delay()
+{
+	if (mmc_host.mmc_cont_version)
+	{
+		/* Wait for the MMC_BOOT_MCI register write to go through. */
+		while(readl(MMC_BOOT_MCI_STATUS2) & MMC_BOOT_MCI_MCLK_REG_WR_ACTIVE);
+	}
+	else
+		udelay((1 + ((3 * USEC_PER_SEC) / (mmc_host.mclk_rate? mmc_host.mclk_rate : MMC_CLK_400KHZ))));
 }
 
 /* Sets a timeout for read operation.
@@ -479,12 +547,6 @@ static unsigned int mmc_boot_send_command(struct mmc_boot_command *cmd)
 	/* 1. Write command argument to MMC_BOOT_MCI_ARGUMENT register */
 	writel(cmd->argument, MMC_BOOT_MCI_ARGUMENT);
 
-	/* Writes to MCI port are not effective for 3 ticks of PCLK.
-	 * The min pclk is 144KHz which gives 6.94 us/tick.
-	 * Thus 21us == 3 ticks.
-	 */
-	udelay(21);
-
 	/* 2. Set appropriate fields and write MMC_BOOT_MCI_CMD */
 	/* 2a. Write command index in CMD_INDEX field */
 	cmd_index = cmd->cmd_index;
@@ -510,10 +572,8 @@ static unsigned int mmc_boot_send_command(struct mmc_boot_command *cmd)
 	/* 2f. Set ENABLE bit to 1 */
 	mmc_cmd |= MMC_BOOT_MCI_CMD_ENABLE;
 
-	/* 2g. Set PROG_ENA bit to 1 for CMD12, CMD13 issued at the end of
-	   write data transfer */
-	if ((cmd_index == CMD12_STOP_TRANSMISSION ||
-	     cmd_index == CMD13_SEND_STATUS) && cmd->prg_enabled) {
+	/* 2g. Set PROG_ENA bit */
+	if (cmd->prg_enabled) {
 		mmc_cmd |= MMC_BOOT_MCI_CMD_PROG_ENA;
 	}
 
@@ -526,6 +586,9 @@ static unsigned int mmc_boot_send_command(struct mmc_boot_command *cmd)
 
 	/* 2k. Write to MMC_BOOT_MCI_CMD register */
 	writel(mmc_cmd, MMC_BOOT_MCI_CMD);
+
+	/* Wait for the MMC_BOOT_MCI_CMD write to go through. */
+	mmc_mclk_reg_wr_delay();
 
 	dprintf(SPEW, "Command sent: CMD%d MCI_CMD_REG:%x MCI_ARG:%x\n",
 		cmd_index, mmc_cmd, cmd->argument);
@@ -607,6 +670,13 @@ static unsigned int mmc_boot_send_command(struct mmc_boot_command *cmd)
 
 	}
 	while (1);
+
+
+	/* 2k. Write to MMC_BOOT_MCI_CMD register */
+	writel(0, MMC_BOOT_MCI_CMD);
+
+	/* Wait for the MMC_BOOT_MCI_CMD write to go through. */
+	mmc_mclk_reg_wr_delay();
 
 	return mmc_return;
 }
@@ -1059,6 +1129,9 @@ mmc_boot_send_ext_cmd(struct mmc_boot_card *card, unsigned char *buf)
 	mmc_reg |= MMC_BOOT_MCI_CLK_ENA_FLOW;
 	writel(mmc_reg, MMC_BOOT_MCI_CLK);
 
+	/* Wait for the MMC_BOOT_MCI_CLK write to go through. */
+	mmc_mclk_reg_wr_delay();
+
 	/* Write data timeout period to MCI_DATA_TIMER register. */
 	/* Data timeout period should be in card bus clock periods */
 	mmc_reg = 0xFFFFFFFF;
@@ -1071,11 +1144,19 @@ mmc_boot_send_ext_cmd(struct mmc_boot_card *card, unsigned char *buf)
 	    MMC_BOOT_MCI_DATA_ENABLE | MMC_BOOT_MCI_DATA_DIR | (512 <<
 								MMC_BOOT_MCI_BLKSIZE_POS);
 
-#if MMC_BOOT_ADM
+#if MMC_BOOT_ADM || MMC_BOOT_BAM
 	mmc_reg |= MMC_BOOT_MCI_DATA_DM_ENABLE;
 #endif
 
 	writel(mmc_reg, MMC_BOOT_MCI_DATA_CTL);
+
+	/* Wait for the MMC_BOOT_MCI_DATA_CTL write to go through. */
+	mmc_mclk_reg_wr_delay();
+
+#if MMC_BOOT_BAM
+	/*  Setup SDCC BAM descriptors for Read operation. */
+	mmc_ret = mmc_boot_bam_setup_desc(mmc_ptr, 512, MMC_BOOT_DATA_READ);
+#endif
 
 	memset((struct mmc_boot_command *)&cmd, 0,
 	       sizeof(struct mmc_boot_command));
@@ -1092,7 +1173,13 @@ mmc_boot_send_ext_cmd(struct mmc_boot_card *card, unsigned char *buf)
 	}
 
 	/* Read the transfer data from SDCC FIFO. */
-	mmc_ret = mmc_boot_fifo_data_transfer(mmc_ptr, 512, MMC_BOOT_DATA_READ);
+	mmc_ret = mmc_boot_data_transfer(mmc_ptr, 512, MMC_BOOT_DATA_READ);
+
+	/* Reset DPSM */
+	writel(0, MMC_BOOT_MCI_DATA_CTL);
+
+	/* Wait for the MMC_BOOT_MCI_DATA_CTL write to go through. */
+	mmc_mclk_reg_wr_delay();
 
 	return mmc_ret;
 }
@@ -1107,6 +1194,7 @@ mmc_boot_switch_cmd(struct mmc_boot_card *card,
 
 	struct mmc_boot_command cmd;
 	unsigned int mmc_ret = MMC_BOOT_E_SUCCESS;
+	uint32_t mmc_status;
 
 	/* basic check */
 	if (card == NULL) {
@@ -1130,13 +1218,46 @@ mmc_boot_switch_cmd(struct mmc_boot_card *card,
 	cmd.argument |= (value << 8);
 	cmd.cmd_type = MMC_BOOT_CMD_ADDRESS;
 	cmd.resp_type = MMC_BOOT_RESP_R1B;
+	cmd.prg_enabled = 1;
 
 	mmc_ret = mmc_boot_send_command(&cmd);
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
+		dprintf(CRITICAL,"Send cmd6 failed\n");
 		return mmc_ret;
 	}
 
-	return MMC_BOOT_E_SUCCESS;
+	/* Wait for interrupt or poll on PROG_DONE bit of MCI_STATUS register.
+	 * If PROG_DONE bit is set to 1 it means that the card finished it programming
+	 * and stopped driving DAT0 line to 0.
+	 */
+	do {
+		mmc_status = readl(MMC_BOOT_MCI_STATUS);
+		if (mmc_status & MMC_BOOT_MCI_STAT_PROG_DONE) {
+			break;
+		}
+	}
+	while (1);
+
+	/* Check if the card completed the switch command processing */
+	mmc_ret = mmc_boot_get_card_status(card, 0, &mmc_status);
+	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
+		dprintf(CRITICAL, "Get card status failed\n");
+		return mmc_ret;
+	}
+
+	if (MMC_BOOT_CARD_STATUS(mmc_status) != MMC_BOOT_TRAN_STATE)
+	{
+		dprintf(CRITICAL, "Switch cmd failed. Card not in tran state\n");
+		mmc_ret = MMC_BOOT_E_FAILURE;
+	}
+
+	if (mmc_status & MMC_BOOT_SWITCH_FUNC_ERR_FLAG)
+	{
+		dprintf(CRITICAL, "Switch cmd failed. Switch Error.\n");
+		mmc_ret = MMC_BOOT_E_FAILURE;
+	}
+
+	return mmc_ret;
 }
 
 /*
@@ -1148,8 +1269,6 @@ mmc_boot_set_bus_width(struct mmc_boot_card *card, unsigned int width)
 	unsigned int mmc_ret = MMC_BOOT_E_SUCCESS;
 	unsigned int mmc_reg = 0;
 	unsigned int mmc_width = 0;
-	unsigned int status;
-	unsigned int wait_count = 100;
 
 	if (width != MMC_BOOT_BUS_WIDTH_1_BIT) {
 		mmc_width = width - 1;
@@ -1159,22 +1278,9 @@ mmc_boot_set_bus_width(struct mmc_boot_card *card, unsigned int width)
 				      MMC_BOOT_EXT_CMMC_BUS_WIDTH, mmc_width);
 
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
+		dprintf(CRITICAL, "Switch cmd failed\n");
 		return mmc_ret;
 	}
-
-	/* Wait for the card to complete the switch command processing */
-	do {
-		mmc_ret = mmc_boot_get_card_status(card, 0, &status);
-		if (mmc_ret != MMC_BOOT_E_SUCCESS) {
-			return mmc_ret;
-		}
-
-		wait_count--;
-		if (wait_count == 0) {
-			return MMC_BOOT_E_FAILURE;
-		}
-	}
-	while (MMC_BOOT_CARD_STATUS(status) == MMC_BOOT_PROG_STATE);
 
 	/* set MCI_CLK accordingly */
 	mmc_reg = readl(MMC_BOOT_MCI_CLK);
@@ -1188,7 +1294,8 @@ mmc_boot_set_bus_width(struct mmc_boot_card *card, unsigned int width)
 	}
 	writel(mmc_reg, MMC_BOOT_MCI_CLK);
 
-	mdelay(10);		// Giving some time to card to stabilize.
+	/* Wait for the MMC_BOOT_MCI_CLK write to go through. */
+	mmc_mclk_reg_wr_delay();
 
 	return MMC_BOOT_E_SUCCESS;
 }
@@ -1352,6 +1459,9 @@ mmc_boot_write_to_card(struct mmc_boot_host *host,
 	mmc_reg |= MMC_BOOT_MCI_CLK_ENA_FLOW;
 	writel(mmc_reg, MMC_BOOT_MCI_CLK);
 
+	/* Wait for the MMC_BOOT_MCI_CLK write to go through. */
+	mmc_mclk_reg_wr_delay();
+
 	/* Write data timeout period to MCI_DATA_TIMER register */
 	/* Data timeout period should be in card bus clock periods */
 	/*TODO: Fix timeout value */
@@ -1360,6 +1470,10 @@ mmc_boot_write_to_card(struct mmc_boot_host *host,
 
 	/* Write the total size of the transfer data to MCI_DATA_LENGTH register */
 	writel(data_len, MMC_BOOT_MCI_DATA_LENGTH);
+
+#if MMC_BOOT_BAM
+		mmc_boot_bam_setup_desc(in, data_len, MMC_BOOT_DATA_WRITE);
+#endif
 
 	/* Send command to the card/device in order to start the write data xfer.
 	   The possible commands are CMD24/25/53/60/61 */
@@ -1382,7 +1496,7 @@ mmc_boot_write_to_card(struct mmc_boot_host *host,
 
 	/* Set DM_ENABLE bit to 1 in order to enable DMA, otherwise set 0 */
 
-#if MMC_BOOT_ADM
+#if MMC_BOOT_ADM || MMC_BOOT_BAM
 	mmc_reg |= MMC_BOOT_MCI_DATA_DM_ENABLE;
 #endif
 
@@ -1391,9 +1505,12 @@ mmc_boot_write_to_card(struct mmc_boot_host *host,
 	mmc_reg |= card->wr_block_len << MMC_BOOT_MCI_BLKSIZE_POS;
 	writel(mmc_reg, MMC_BOOT_MCI_DATA_CTL);
 
+	/* Wait for the MMC_BOOT_MCI_DATA_CTL write to go through. */
+	mmc_mclk_reg_wr_delay();
+
 	/* write data to FIFO */
 	mmc_ret =
-	    mmc_boot_fifo_data_transfer(in, data_len, MMC_BOOT_DATA_WRITE);
+	    mmc_boot_data_transfer(in, data_len, MMC_BOOT_DATA_WRITE);
 
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
 		dprintf(CRITICAL, "Error No.%d: Failure on data transfer from the \
@@ -1438,6 +1555,17 @@ mmc_boot_write_to_card(struct mmc_boot_host *host,
 	}
 	while (1);
 
+#if MMC_BOOT_BAM
+	/* Wait for DML trasaction to end */
+	mmc_boot_dml_wait_consumer_idle();
+#endif
+
+	/* Reset DPSM */
+	writel(0, MMC_BOOT_MCI_DATA_CTL);
+
+	/* Wait for the MMC_BOOT_MCI_DATA_CTL write to go through. */
+	mmc_mclk_reg_wr_delay();
+
 	return MMC_BOOT_E_SUCCESS;
 }
 
@@ -1449,32 +1577,15 @@ mmc_boot_adjust_interface_speed(struct mmc_boot_host *host,
 				struct mmc_boot_card *card)
 {
 	unsigned int mmc_ret = MMC_BOOT_E_SUCCESS;
-	unsigned int status;
-	unsigned int wait_count = 100;
 
 	/* Setting HS_TIMING in EXT_CSD (CMD6) */
 	mmc_ret = mmc_boot_switch_cmd(card, MMC_BOOT_ACCESS_WRITE,
 				      MMC_BOOT_EXT_CMMC_HS_TIMING, 1);
 
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
+		dprintf(CRITICAL, "Switch cmd returned failure %d\n", __LINE__);
 		return mmc_ret;
 	}
-
-	/* Wait for the card to complete the switch command processing */
-	do {
-		mmc_ret = mmc_boot_get_card_status(card, 0, &status);
-		if (mmc_ret != MMC_BOOT_E_SUCCESS) {
-			dprintf(CRITICAL, "WARNING: Failed to get card status after"
-							  "cmd6. ret = %d wait_count = %d\n",
-					mmc_ret, wait_count);
-		}
-
-		wait_count--;
-		if (wait_count == 0) {
-			return MMC_BOOT_E_FAILURE;
-		}
-	}
-	while (MMC_BOOT_CARD_STATUS(status) == MMC_BOOT_PROG_STATE);
 
 	clock_config_mmc(mmc_slot, MMC_CLK_50MHZ);
 
@@ -1619,7 +1730,7 @@ mmc_boot_read_from_card(struct mmc_boot_host *host,
 
 	/* If DMA is to be used, Set DM_ENABLE bit to 1 */
 
-#if MMC_BOOT_ADM
+#if MMC_BOOT_ADM || MMC_BOOT_BAM
 	mmc_reg |= MMC_BOOT_MCI_DATA_DM_ENABLE;
 #endif
 
@@ -1628,6 +1739,13 @@ mmc_boot_read_from_card(struct mmc_boot_host *host,
 	mmc_reg |= (card->rd_block_len << MMC_BOOT_MCI_BLKSIZE_POS);
 	writel(mmc_reg, MMC_BOOT_MCI_DATA_CTL);
 
+	/* Wait for the MMC_BOOT_MCI_DATA_CTL write to go through. */
+	mmc_mclk_reg_wr_delay();
+
+#if MMC_BOOT_BAM
+	/* Setup SDCC FIFO descriptors for Read operation. */
+	mmc_ret = mmc_boot_bam_setup_desc(out, data_len, MMC_BOOT_DATA_READ);
+#endif
 	/* Send command to the card/device in order to start the read data
 	   transfer. Possible commands: CMD17/18/53/60/61. */
 	mmc_ret = mmc_boot_send_read_command(card, xfer_type, addr);
@@ -1639,8 +1757,7 @@ mmc_boot_read_from_card(struct mmc_boot_host *host,
 	}
 
 	/* Read the transfer data from SDCC FIFO. */
-	mmc_ret =
-	    mmc_boot_fifo_data_transfer(out, data_len, MMC_BOOT_DATA_READ);
+	mmc_ret = mmc_boot_data_transfer(out, data_len, MMC_BOOT_DATA_READ);
 
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
 		dprintf(CRITICAL, "Error No.%d: Failure on data transfer from the \
@@ -1661,6 +1778,12 @@ mmc_boot_read_from_card(struct mmc_boot_host *host,
 		}
 	}
 
+	/* Reset DPSM */
+	writel(0, MMC_BOOT_MCI_DATA_CTL);
+
+	/* Wait for the MMC_BOOT_MCI_DATA_CTL write to go through. */
+	mmc_mclk_reg_wr_delay();
+
 	return MMC_BOOT_E_SUCCESS;
 }
 
@@ -1678,6 +1801,9 @@ unsigned int mmc_boot_init(struct mmc_boot_host *host)
 	/* Initialize any clocks needed for SDC controller */
 	clock_init_mmc(mmc_slot);
 
+	/* Save the verison on the mmc controller. */
+	host->mmc_cont_version = readl(MMC_BOOT_MCI_VERSION);
+
 	/* Setup initial freq to 400KHz */
 	clock_config_mmc(mmc_slot, MMC_CLK_400KHZ);
 
@@ -1685,13 +1811,14 @@ unsigned int mmc_boot_init(struct mmc_boot_host *host)
 
 	/* set power mode */
 	/* give some time to reach minimum voltate */
-	mdelay(2);
+
 	mmc_pwr &= ~MMC_BOOT_MCI_PWR_UP;
 	mmc_pwr |= MMC_BOOT_MCI_PWR_ON;
 	mmc_pwr |= MMC_BOOT_MCI_PWR_UP;
 	writel(mmc_pwr, MMC_BOOT_MCI_POWER);
-	/* some more time to stabilize voltage */
-	mdelay(2);
+
+	/* Wait for the MMC_BOOT_MCI_POWER write to go through. */
+	mmc_mclk_reg_wr_delay();
 
 	return MMC_BOOT_E_SUCCESS;
 }
@@ -1982,7 +2109,8 @@ mmc_boot_set_sd_bus_width(struct mmc_boot_card *card, unsigned int width)
 	}
 	writel(sd_reg, MMC_BOOT_MCI_CLK);
 
-	mdelay(10);		// Giving some time to card to stabilize.
+	/* Wait for the MMC_BOOT_MCI_CLK write to go through. */
+	mmc_mclk_reg_wr_delay();
 
 	return MMC_BOOT_E_SUCCESS;
 }
@@ -2003,8 +2131,6 @@ mmc_boot_set_sd_hs(struct mmc_boot_host *host, struct mmc_boot_card *card)
 		return mmc_ret;
 	}
 
-	mdelay(1);
-
 	clock_config_mmc(mmc_slot, MMC_CLK_50MHZ);
 
 	host->mclk_rate = MMC_CLK_50MHZ;
@@ -2023,6 +2149,7 @@ mmc_boot_init_and_identify_cards(struct mmc_boot_host *host,
 {
 	unsigned int mmc_return = MMC_BOOT_E_SUCCESS;
 	unsigned int status;
+	uint8_t mmc_bus_width = 0;
 
 	/* Basic check */
 	if (host == NULL) {
@@ -2081,8 +2208,9 @@ mmc_boot_init_and_identify_cards(struct mmc_boot_host *host,
 		}
 
 		/* enable wide bus */
+		mmc_bus_width = target_mmc_bus_width();
 		mmc_return =
-		    mmc_boot_set_bus_width(card, MMC_BOOT_BUS_WIDTH_4_BIT);
+		    mmc_boot_set_bus_width(card, mmc_bus_width);
 		if (mmc_return != MMC_BOOT_E_SUCCESS) {
 			dprintf(CRITICAL,
 				"Error No.%d: Failure to set wide bus for Card(RCA:%x)\n",
@@ -2143,6 +2271,12 @@ unsigned int mmc_boot_main(unsigned char slot, unsigned int base)
 		return MMC_BOOT_E_FAILURE;
 	}
 
+#if MMC_BOOT_BAM
+
+	mmc_ret = mmc_bam_init(mmc_sdc_bam_base[slot - 1]);
+	dml_base = mmc_sdc_dml_base[slot - 1];
+#endif
+
 	/* Initialize and identify cards connected to host */
 	mmc_ret = mmc_boot_init_and_identify_cards(&mmc_host, &mmc_card);
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
@@ -2200,9 +2334,24 @@ unsigned int
 mmc_read(unsigned long long data_addr, unsigned int *out, unsigned int data_len)
 {
 	int val = 0;
-	val =
-	    mmc_boot_read_from_card(&mmc_host, &mmc_card, data_addr, data_len,
-				    out);
+	unsigned int data_limit = mmc_card.rd_block_len * 0xffff;
+	unsigned int this_len;
+
+	do {
+		this_len = (data_len > data_limit) ? data_limit : data_len;
+
+		val =
+		    mmc_boot_read_from_card(&mmc_host, &mmc_card, data_addr,
+				    this_len, out);
+
+		if (val != MMC_BOOT_E_SUCCESS)
+			return val;
+
+		data_len -= this_len;
+		data_addr += this_len;
+		out += (this_len / sizeof(*out));
+	} while (data_len > 0);
+
 	return val;
 }
 
@@ -2223,6 +2372,9 @@ mmc_boot_read_reg(struct mmc_boot_card *card,
 	mmc_reg |= MMC_BOOT_MCI_CLK_ENA_FLOW;
 	writel(mmc_reg, MMC_BOOT_MCI_CLK);
 
+	/* Wait for the MMC_BOOT_MCI_CLK write to go through. */
+	mmc_mclk_reg_wr_delay();
+
 	/* Write data timeout period to MCI_DATA_TIMER register. */
 	/* Data timeout period should be in card bus clock periods */
 	mmc_reg = 0xFFFFFFFF;
@@ -2235,11 +2387,14 @@ mmc_boot_read_reg(struct mmc_boot_card *card,
 	    MMC_BOOT_MCI_DATA_ENABLE | MMC_BOOT_MCI_DATA_DIR | (data_len <<
 								MMC_BOOT_MCI_BLKSIZE_POS);
 
-#if MMC_BOOT_ADM
+#if MMC_BOOT_ADM || MMC_BOOT_BAM
 	mmc_reg |= MMC_BOOT_MCI_DATA_DM_ENABLE;
 #endif
 
 	writel(mmc_reg, MMC_BOOT_MCI_DATA_CTL);
+
+	/* Wait for the MMC_BOOT_MCI_DATA_CTL write to go through. */
+	mmc_mclk_reg_wr_delay();
 
 	memset((struct mmc_boot_command *)&cmd, 0,
 	       sizeof(struct mmc_boot_command));
@@ -2257,7 +2412,7 @@ mmc_boot_read_reg(struct mmc_boot_card *card,
 
 	/* Read the transfer data from SDCC FIFO. */
 	mmc_ret =
-	    mmc_boot_fifo_data_transfer(out, data_len, MMC_BOOT_DATA_READ);
+	    mmc_boot_data_transfer(out, data_len, MMC_BOOT_DATA_READ);
 
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
 		dprintf(CRITICAL, "Error No.%d: Failure on data transfer from the \
@@ -2286,22 +2441,9 @@ mmc_boot_set_clr_power_on_wp_user(struct mmc_boot_card *card,
 	       sizeof(struct mmc_boot_command));
 
 	/* Disabling PERM_WP for USER AREA (CMD6) */
-	mmc_ret = mmc_boot_switch_cmd(card, MMC_BOOT_ACCESS_WRITE,
+	mmc_ret = mmc_boot_switch_cmd(card, MMC_BOOT_SET_BIT,
 				      MMC_BOOT_EXT_USER_WP,
 				      MMC_BOOT_US_PERM_WP_DIS);
-
-	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
-		return mmc_ret;
-	}
-
-	/* Sending CMD13 to check card status */
-	do {
-		mmc_ret = mmc_boot_get_card_status(card, 0, &status);
-		if (MMC_BOOT_CARD_STATUS(status) == MMC_BOOT_TRAN_STATE)
-			break;
-	}
-	while ((mmc_ret == MMC_BOOT_E_SUCCESS) &&
-	       (MMC_BOOT_CARD_STATUS(status) == MMC_BOOT_PROG_STATE));
 
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
 		return mmc_ret;
@@ -2346,23 +2488,9 @@ mmc_boot_set_clr_power_on_wp_user(struct mmc_boot_card *card,
 	}
 
 	/* Setting POWER_ON_WP for USER AREA (CMD6) */
-
-	mmc_ret = mmc_boot_switch_cmd(card, MMC_BOOT_ACCESS_WRITE,
+	mmc_ret = mmc_boot_switch_cmd(card, MMC_BOOT_SET_BIT,
 				      MMC_BOOT_EXT_USER_WP,
 				      MMC_BOOT_US_PWR_WP_EN);
-
-	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
-		return mmc_ret;
-	}
-
-	/* Sending CMD13 to check card status */
-	do {
-		mmc_ret = mmc_boot_get_card_status(card, 0, &status);
-		if (MMC_BOOT_CARD_STATUS(status) == MMC_BOOT_TRAN_STATE)
-			break;
-	}
-	while ((mmc_ret == MMC_BOOT_E_SUCCESS) &&
-	       (MMC_BOOT_CARD_STATUS(status) == MMC_BOOT_PROG_STATE));
 
 	if (mmc_ret != MMC_BOOT_E_SUCCESS) {
 		return mmc_ret;
@@ -2443,13 +2571,29 @@ mmc_wp(unsigned int sector, unsigned int size, unsigned char set_clear_wp)
 	unsigned int rc = MMC_BOOT_E_SUCCESS;
 
 	/* Checking whether group write protection feature is available */
-	if (mmc_card.csd.wp_grp_enable) {
+	if (mmc_card.csd.wp_grp_enable)
+	{
 		rc = mmc_boot_get_wp_status(&mmc_card, sector);
+		if (rc != MMC_BOOT_E_SUCCESS)
+		{
+			dprintf(CRITICAL, "Failure in getting wp_status (%u):%s:%u\n", rc, __FILE__, __LINE__);
+			return rc;
+		}
 		rc = mmc_boot_set_clr_power_on_wp_user(&mmc_card, sector, size,
 						       set_clear_wp);
+		if (rc != MMC_BOOT_E_SUCCESS)
+		{
+			dprintf(CRITICAL, "Failure in setting power on wp user (%u):%s:%u\n", rc, __FILE__, __LINE__);
+			return rc;
+		}
 		rc = mmc_boot_get_wp_status(&mmc_card, sector);
-		return rc;
-	} else
+		if (rc != MMC_BOOT_E_SUCCESS)
+		{
+			dprintf(CRITICAL, "Failure in getting wp_status (%u)%s:%u\n", rc, __FILE__, __LINE__);
+			return rc;
+		}
+	}
+	else
 		return MMC_BOOT_E_FAILURE;
 }
 
@@ -2468,7 +2612,7 @@ unsigned mmc_get_psn(void)
  * Read/write data from/to SDC FIFO.
  */
 static unsigned int
-mmc_boot_fifo_data_transfer(unsigned int *data_ptr,
+mmc_boot_data_transfer(unsigned int *data_ptr,
 			    unsigned int data_len, unsigned char direction)
 {
 	unsigned int mmc_ret = MMC_BOOT_E_SUCCESS;
@@ -2491,6 +2635,9 @@ mmc_boot_fifo_data_transfer(unsigned int *data_ptr,
 		dprintf(CRITICAL, "MMC ADM transfer error: %d\n", ret);
 		mmc_ret = MMC_BOOT_E_FAILURE;
 	}
+
+#elif MMC_BOOT_BAM
+	mmc_ret = mmc_bam_transfer_data(data_ptr, data_len, direction);
 #else
 
 	if (direction == MMC_BOOT_DATA_READ) {
@@ -2499,6 +2646,7 @@ mmc_boot_fifo_data_transfer(unsigned int *data_ptr,
 		mmc_ret = mmc_boot_fifo_write(data_ptr, data_len);
 	}
 #endif
+
 	return mmc_ret;
 }
 
@@ -2566,45 +2714,49 @@ mmc_boot_fifo_write(unsigned int *mmc_ptr, unsigned int data_len)
 	unsigned int mmc_count = 0;
 	unsigned int write_error = MMC_BOOT_MCI_STAT_DATA_CRC_FAIL |
 	    MMC_BOOT_MCI_STAT_DATA_TIMEOUT | MMC_BOOT_MCI_STAT_TX_UNDRUN;
+	unsigned int count = 0;
+	unsigned int sz = 0;
 
 	/* Write the transfer data to SDCC3 FIFO */
 	do {
-		mmc_ret = MMC_BOOT_E_SUCCESS;
 		mmc_status = readl(MMC_BOOT_MCI_STATUS);
 
-		if (mmc_status & write_error) {
-			mmc_ret = mmc_boot_status_error(mmc_status);
-			break;
-		}
+		/* Bytes left to write */
+		count = data_len - mmc_count;
 
-		/* Write the data in MCI_FIFO register as long as TXFIFO_FULL bit of
-		   MCI_STATUS register is 0. Continue the writes until the whole
-		   transfer data is written. */
-		if (((data_len - mmc_count) >= MMC_BOOT_MCI_FIFO_SIZE / 2) &&
-		    (mmc_status & MMC_BOOT_MCI_STAT_TX_FIFO_HFULL)) {
-			for (int i = 0; i < MMC_BOOT_MCI_HFIFO_COUNT; i++) {
-				/* FIFO contains 16 32-bit data buffer on 16 sequential addresses */
-				writel(*mmc_ptr, MMC_BOOT_MCI_FIFO +
-				       (mmc_count % MMC_BOOT_MCI_FIFO_SIZE));
+		/* Break if whole data is transferred */
+		if (!count)
+			break;
+
+		/* Write half FIFO or less (remaining) words in MCI_FIFO as long as either
+		   TX_FIFO_EMPTY or TX_FIFO_HFULL bits of MCI_STATUS register are set. */
+		if ((mmc_status & MMC_BOOT_MCI_STAT_TX_FIFO_EMPTY) ||
+			(mmc_status & MMC_BOOT_MCI_STAT_TX_FIFO_HFULL)) {
+
+			/* Write minimum of half FIFO and remaining words */
+			sz = ((count >> 2) >  MMC_BOOT_MCI_HFIFO_COUNT) \
+				 ? MMC_BOOT_MCI_HFIFO_COUNT : (count >> 2);
+
+			for (int i = 0; i < sz; i++) {
+				writel(*mmc_ptr, MMC_BOOT_MCI_FIFO);
 				mmc_ptr++;
 				/* increase mmc_count by word size */
 				mmc_count += sizeof(unsigned int);
 			}
-
-		} else if (!(mmc_status & MMC_BOOT_MCI_STAT_TX_FIFO_FULL)
-			   && (mmc_count != data_len)) {
-			/* FIFO contains 16 32-bit data buffer on 16 sequential addresses */
-			writel(*mmc_ptr, MMC_BOOT_MCI_FIFO +
-			       (mmc_count % MMC_BOOT_MCI_FIFO_SIZE));
-			mmc_ptr++;
-			/* increase mmc_count by word size */
-			mmc_count += sizeof(unsigned int);
-		} else if ((mmc_status & MMC_BOOT_MCI_STAT_DATA_END)) {
-			break;	//success
 		}
-
 	}
 	while (1);
+
+	do
+	{
+		mmc_status = readl(MMC_BOOT_MCI_STATUS);
+		if (mmc_status & write_error) {
+			mmc_ret = mmc_boot_status_error(mmc_status);
+			break;
+		}
+	}
+	while (!(mmc_status & MMC_BOOT_MCI_STAT_DATA_END));
+
 	return mmc_ret;
 }
 
@@ -2830,3 +2982,313 @@ struct mmc_boot_card *get_mmc_card(void)
 {
 	return &mmc_card;
 }
+
+/*
+ * Disable MCI clk
+ */
+void mmc_boot_mci_clk_disable()
+{
+	uint32_t reg = 0;
+
+	reg |= MMC_BOOT_MCI_CLK_DISABLE;
+	writel(reg, MMC_BOOT_MCI_CLK);
+
+	/* Wait for the MMC_BOOT_MCI_CLK write to go through. */
+	mmc_mclk_reg_wr_delay();
+}
+
+/*
+ * Enable MCI CLK
+ */
+void mmc_boot_mci_clk_enable()
+{
+	uint32_t reg = 0;
+
+	reg |= MMC_BOOT_MCI_CLK_ENABLE;
+	reg |= MMC_BOOT_MCI_CLK_ENA_FLOW;
+	reg |= MMC_BOOT_MCI_CLK_IN_FEEDBACK;
+	writel(reg, MMC_BOOT_MCI_CLK);
+
+	/* Wait for the MMC_BOOT_MCI_CLK write to go through. */
+	mmc_mclk_reg_wr_delay();
+
+	/* Enable power save */
+	reg |= MMC_BOOT_MCI_CLK_PWRSAVE;
+	writel(reg, MMC_BOOT_MCI_CLK);
+
+	/* Wait for the MMC_BOOT_MCI_CLK write to go through. */
+	mmc_mclk_reg_wr_delay();
+}
+
+#if MMC_BOOT_BAM
+
+void mmc_boot_dml_init()
+{
+	uint32_t val = 0;
+
+	/* Initialize s/w reset for DML core */
+	mmc_boot_dml_reset();
+
+	/* Program DML config:
+	 * 1. Disable producer and consumer CRCI.
+	 * 2. Set Bypass mode for the DML for Direct access.
+	 */
+	val = 0;
+	val |= 1 >> SDCC_BYPASS_SHIFT;
+	writel(val, SDCC_DML_CONFIG(dml_base));
+
+	/* Program consumer logic size:
+	 * This is for handshaking between the BAM and the DML blocks.
+	 */
+	writel(4096, SDCC_DML_CONSUMER_PIPE_LOGICAL_SIZE(dml_base));
+
+	/* Program producer logic size
+	 * This is for handshaking between the BAM and the DML blocks.
+	 */
+	writel(4096, SDCC_DML_PRODUCER_PIPE_LOGICAL_SIZE(dml_base));
+
+
+	/* Write the pipe id numbers. */
+	val = 0;
+	val |= bam.pipe[MMC_BOOT_BAM_READ_PIPE_INDEX].pipe_num << SDCC_PRODUCER_PIPE_ID_SHIFT;
+	val |= bam.pipe[MMC_BOOT_BAM_WRITE_PIPE_INDEX].pipe_num << SDCC_CONSUMER_PIPE_ID_SHIFT;
+
+	writel(val, SDCC_DML_PIPE_ID(dml_base));
+
+}
+
+/* Function to set up SDCC dml for System producer transaction. */
+static void mmc_boot_dml_consumer_trans_init()
+{
+	uint32_t val = 0;
+
+	val = 0 << SDCC_PRODUCER_CRCI_SEL_SHIFT;
+	val |= 1 << SDCC_CONSUMER_CRCI_SEL_SHIFT;
+	writel(val, SDCC_DML_CONFIG(dml_base));
+
+
+	/* Start the consumer transaction */
+	writel(1, SDCC_DML_CONSUMER_START(dml_base));
+
+}
+
+/* Function to set up SDCC dml for System consumer transaction.
+ * trans_end: 1: Assert DML trasaction signal
+ *                 at the end of transaction.
+ *                 0: Do not assert DML transaction signal.
+ * size: Transaction size
+ */
+static void mmc_boot_dml_producer_trans_init(unsigned trans_end,
+                                             unsigned size)
+{
+	uint32_t val = 0;
+
+	val = 1 << SDCC_PRODUCER_CRCI_SEL_SHIFT;
+	val |= 0 << SDCC_CONSUMER_CRCI_SEL_SHIFT;
+	val |=  trans_end << SDCC_PRODUCER_TRANS_END_EN_SHIFT;
+	writel(val, SDCC_DML_CONFIG(dml_base));
+
+	/* Set block size */
+    writel(BLOCK_SIZE, SDCC_DML_PRODUCER_BAM_BLOCK_SIZE(dml_base));
+
+	/* Write transaction size */
+	writel(size, SDCC_DML_PRODUCER_BAM_TRANS_SIZE(dml_base));
+
+	/* Start the producer transaction */
+	writel(1, SDCC_DML_PRODUCER_START(dml_base));
+}
+
+/* Function to check producer idle status of the DML.
+ * return value: 1: Producer is idle
+ *                    0: Producer is busy
+ */
+static uint32_t mmc_boot_dml_chk_producer_idle()
+{
+	uint32_t val = 0;
+
+	val = readl(SDCC_DML_STATUS(dml_base));
+
+	/* Read only the producer idle status */
+	val &= (1 << SDCC_DML_PRODUCER_IDLE_SHIFT);
+
+	return val;
+}
+
+/* Function to clear transaction complete flag */
+static void mmc_boot_dml_clr_trans_complete()
+{
+	uint32_t val;
+
+	val = readl(SDCC_DML_CONFIG(dml_base));
+
+	val &=  ~(1 << SDCC_PRODUCER_TRANS_END_EN_SHIFT);
+	writel(val, SDCC_DML_CONFIG(dml_base));
+}
+
+/* Blocking function to wait until DML is idle. */
+static void mmc_boot_dml_wait_producer_idle()
+{
+	while(!(readl(SDCC_DML_STATUS(dml_base)) & 1));
+}
+
+/* Blocking function to wait until DML is idle. */
+static void mmc_boot_dml_wait_consumer_idle()
+{
+	while(!(readl(SDCC_DML_STATUS(dml_base)) & (1 << SDCC_DML_CONSUMER_IDLE_SHIFT)));
+}
+
+/* Initialize S/W reset */
+static void mmc_boot_dml_reset()
+{
+	/* Initialize s/w reset for DML core */
+	writel(1, SDCC_DML_SW_RESET(dml_base));
+
+}
+
+static int mmc_bam_init(uint32_t bam_base)
+{
+
+	uint32_t mmc_ret = MMC_BOOT_E_SUCCESS;
+
+	bam.base = bam_base;
+	/* Read pipe parameter initializations. */
+	bam.pipe[MMC_BOOT_BAM_READ_PIPE_INDEX].pipe_num = MMC_BOOT_BAM_READ_PIPE;
+	/* System consumer */
+	bam.pipe[MMC_BOOT_BAM_READ_PIPE_INDEX].trans_type = BAM2SYS;
+	/* Set the descriptor FIFO start ptr */
+	bam.pipe[MMC_BOOT_BAM_READ_PIPE_INDEX].fifo.head = desc_fifo;
+	/* Set the descriptor FIFO lengths */
+	bam.pipe[MMC_BOOT_BAM_READ_PIPE_INDEX].fifo.size = MMC_BOOT_BAM_FIFO_SIZE;
+
+	/* Write pipe parameter initializations.*/
+	bam.pipe[MMC_BOOT_BAM_WRITE_PIPE_INDEX].pipe_num = MMC_BOOT_BAM_WRITE_PIPE;
+	/* System producer */
+	bam.pipe[MMC_BOOT_BAM_WRITE_PIPE_INDEX].trans_type = SYS2BAM;
+	/* Write fifo uses the same fifo as read */
+	bam.pipe[MMC_BOOT_BAM_WRITE_PIPE_INDEX].fifo.head = desc_fifo;
+	/* Set the descriptor FIFO lengths */
+	bam.pipe[MMC_BOOT_BAM_WRITE_PIPE_INDEX].fifo.size = MMC_BOOT_BAM_FIFO_SIZE;
+
+	/* Programs the minimum threshold for BAM transfer*/
+	bam.threshold = BLOCK_SIZE;
+
+	/* Initialize MMC BAM */
+	bam_init(&bam);
+
+	/* Initialize BAM MMC read pipe */
+	bam_sys_pipe_init(&bam, MMC_BOOT_BAM_READ_PIPE_INDEX);
+
+	mmc_ret = bam_pipe_fifo_init(&bam, bam.pipe[MMC_BOOT_BAM_READ_PIPE_INDEX].pipe_num);
+
+	if (mmc_ret)
+	{
+		dprintf(CRITICAL, "MMC: BAM Read pipe fifo init error\n");
+		goto mmc_bam_init_error;
+	}
+
+	/* Initialize BAM MMC write pipe */
+	bam_sys_pipe_init(&bam, MMC_BOOT_BAM_WRITE_PIPE_INDEX);
+
+	mmc_ret = bam_pipe_fifo_init(&bam, bam.pipe[MMC_BOOT_BAM_WRITE_PIPE_INDEX].pipe_num);
+
+	if (mmc_ret)
+	{
+		dprintf(CRITICAL, "MMC: BAM Write pipe fifo init error\n");
+		goto mmc_bam_init_error;
+	}
+
+	mmc_boot_dml_init();
+
+	mmc_bam_init_error:
+
+	return mmc_ret;
+}
+
+static int mmc_bam_transfer_data(unsigned int *data_ptr,
+                                 unsigned int data_len,
+			                     unsigned int dir)
+{
+	uint32_t mmc_ret;
+	uint32_t offset;
+
+	mmc_ret = MMC_BOOT_E_SUCCESS;
+
+	if(dir == MMC_BOOT_DATA_READ)
+	{
+		/* Check BAM IRQ status reg to verify the desc has been processed */
+		mmc_ret = bam_wait_for_interrupt(&bam,
+					MMC_BOOT_BAM_READ_PIPE_INDEX, P_PRCSD_DESC_EN_MASK);
+
+		if (mmc_ret != BAM_RESULT_SUCCESS)
+		{
+			dprintf(CRITICAL, "BAM transfer error \n");
+			mmc_ret = MMC_BOOT_E_FAILURE;
+			goto mmc_bam_transfer_err;
+		}
+
+		mmc_boot_dml_wait_producer_idle();
+
+		/* Update BAM pipe fifo offsets */
+		offset = bam_read_offset_update(&bam, MMC_BOOT_BAM_READ_PIPE_INDEX);
+
+		/* Reset DPSM */
+		writel(0, MMC_BOOT_MCI_DATA_CTL);
+
+		/* Wait for the MMC_BOOT_MCI_DATA_CTL write to go through. */
+		mmc_mclk_reg_wr_delay();
+
+		dprintf(SPEW, "Offset value is %d \n", offset);
+	}
+	else
+	{
+		/* Check BAM IRQ status reg to verify the desc has been processed */
+		mmc_ret = bam_wait_for_interrupt(&bam,
+					MMC_BOOT_BAM_WRITE_PIPE_INDEX, P_TRNSFR_END_EN_MASK);
+
+		if (mmc_ret != BAM_RESULT_SUCCESS)
+		{
+			dprintf(CRITICAL, "BAM transfer error \n");
+			mmc_ret = MMC_BOOT_E_FAILURE;
+			goto mmc_bam_transfer_err;
+		}
+
+		/* Update BAM pipe fifo offsets */
+		offset = bam_read_offset_update(&bam, MMC_BOOT_BAM_WRITE_PIPE_INDEX);
+
+		dprintf(SPEW, "Offset value is %d \n", offset);
+	}
+
+mmc_bam_transfer_err:
+
+	return mmc_ret;
+}
+
+static unsigned int
+mmc_boot_bam_setup_desc(unsigned int *data_ptr,
+                        unsigned int data_len,
+                        unsigned char direction)
+{
+	unsigned int mmc_ret = MMC_BOOT_E_SUCCESS;
+
+	if (direction == MMC_BOOT_DATA_READ)
+	{
+		mmc_boot_dml_producer_trans_init(1, data_len);
+		mmc_ret = bam_add_desc(&bam, MMC_BOOT_BAM_READ_PIPE_INDEX,
+					(unsigned char *)data_ptr, data_len);
+	}
+	else
+	{
+		mmc_boot_dml_consumer_trans_init();
+		mmc_ret = bam_add_desc(&bam, MMC_BOOT_BAM_WRITE_PIPE_INDEX,
+					(unsigned char *)data_ptr, data_len);
+	}
+
+	/* Update return value enums */
+	if (mmc_ret != BAM_RESULT_SUCCESS)
+	{
+		dprintf(CRITICAL, "MMC BAM transfer error: %d\n", mmc_ret);
+		mmc_ret = MMC_BOOT_E_FAILURE;
+	}
+}
+
+#endif

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -10,7 +10,7 @@
  *       copyright notice, this list of conditions and the following
  *       disclaimer in the documentation and/or other materials provided
  *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *     * Neither the name of The Linux Foundation nor the names of its
  *       contributors may be used to endorse or promote products derived
  *       from this software without specific prior written permission.
  *
@@ -244,6 +244,24 @@ static int msm8960_mipi_panel_clock(int enable)
 	return 0;
 }
 
+static int mpq8064_hdmi_panel_clock(int enable)
+{
+	if (enable)
+		mdp_clock_init();
+
+	hdmi_app_clk_init(enable);
+
+	return 0;
+}
+
+static int mpq8064_hdmi_panel_power(int enable)
+{
+	if (enable)
+		hdmi_power_init();
+
+	return 0;
+}
+
 static int msm8960_liquid_mipi_panel_clock(int enable)
 {
 	if (enable) {
@@ -408,6 +426,23 @@ void display_init(void)
 		panel.fb.format = FB_FORMAT_RGB888;
 		panel.mdp_rev = MDP_REV_42;
 		break;
+	case LINUX_MACHTYPE_8064_MPQ_CDP:
+	case LINUX_MACHTYPE_8064_MPQ_HRD:
+	case LINUX_MACHTYPE_8064_MPQ_DTV:
+		hdmi_msm_panel_init(&panel.panel_info);
+
+		panel.clk_func   = mpq8064_hdmi_panel_clock;
+		panel.power_func = mpq8064_hdmi_panel_power;
+		panel.fb.base    = 0x89000000;
+		panel.fb.width   = panel.panel_info.xres;
+		panel.fb.height  = panel.panel_info.yres;
+		panel.fb.stride  = panel.panel_info.xres;
+		panel.fb.bpp     = panel.panel_info.bpp;
+		panel.fb.format  = FB_FORMAT_RGB565;
+		panel.mdp_rev    = MDP_REV_44;
+
+		hdmi_set_fb_addr(panel.fb.base);
+		break;
 	default:
 		return;
 	};
@@ -417,7 +452,6 @@ void display_init(void)
 		return;
 	}
 
-	display_image_on_screen();
 	mipi_dsi_cmd_trigger(&panel);
 
 	display_enable = 1;
@@ -425,7 +459,8 @@ void display_init(void)
 
 void display_shutdown(void)
 {
-	if (display_enable)
+	if (display_enable) {
 		msm_display_off();
+	}
 }
 

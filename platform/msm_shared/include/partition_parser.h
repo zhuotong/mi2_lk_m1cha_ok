@@ -1,4 +1,4 @@
-/* Copyright (c) 2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2011, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -10,7 +10,7 @@
  *     copyright notice, this list of conditions and the following
  *     disclaimer in the documentation and/or other materials provided
  *     with the distribution.
- *   * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *   * Neither the name of The Linux Foundation nor the names of its
  *     contributors may be used to endorse or promote products derived
  *     from this software without specific prior written permission.
  *
@@ -68,7 +68,7 @@
 #define MAX_GPT_NAME_SIZE          72
 #define PARTITION_TYPE_GUID_SIZE   16
 #define UNIQUE_PARTITION_GUID_SIZE 16
-#define NUM_PARTITIONS             32
+#define NUM_PARTITIONS             128
 
 /* Some useful define used to access the MBR/EBR table */
 #define BLOCK_SIZE                0x200

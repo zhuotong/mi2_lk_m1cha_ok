@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -10,7 +10,7 @@
  *       copyright notice, this list of conditions and the following
  *       disclaimer in the documentation and/or other materials provided
  *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *     * Neither the name of The Linux Foundation nor the names of its
  *       contributors may be used to endorse or promote products derived
  *       from this software without specific prior written permission.
  *
@@ -73,6 +73,8 @@ struct board_data {
 	uint32_t baseband;
 	uint32_t platform_version;
 	uint32_t soc_id;
+	uint32_t pmic_type;
+	uint32_t pmic_version;
 	uint32_t soc_version;
 	uint32_t pmic_model;
 	uint32_t pmic_die_version;
@@ -87,6 +89,8 @@ uint32_t board_baseband();
 uint32_t board_hardware_id();
 uint32_t board_soc_id();
 uint32_t board_soc_version();
+uint32_t board_pmic_type();
+uint32_t board_pmic_ver();
 uint32_t board_pmic_model();
 uint32_t board_pmic_die_version();
 #endif

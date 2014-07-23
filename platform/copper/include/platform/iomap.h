@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -9,7 +9,7 @@
  *     copyright notice, this list of conditions and the following
  *     disclaimer in the documentation and/or other materials provided
  *     with the distribution.
- *   * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *   * Neither the name of The Linux Foundation nor the names of its
  *     contributors may be used to endorse or promote products derived
  *     from this software without specific prior written permission.
  *
@@ -29,9 +29,16 @@
 #ifndef _PLATFORM_MSMCOPPER_IOMAP_H_
 #define _PLATFORM_MSMCOPPER_IOMAP_H_
 
+#define MSM_IOMAP_BASE              0xF9000000
+#define MSM_IOMAP_END               0xFEFFFFFF
+
 #define SDRAM_START_ADDR            0x00000000
+#define SDRAM_SEC_BANK_START_ADDR   0x10000000
 
 #define MSM_SHARED_BASE             0x0FA00000
+
+#define RPM_MSG_RAM_BASE            0xFC42B000
+#define RESTART_REASON_ADDR         (RPM_MSG_RAM_BASE + 0x65C)
 
 #define KPSS_BASE                   0xF9000000
 
@@ -41,15 +48,25 @@
 #define APCS_APC_KPSS_PLL_BASE      (KPSS_BASE + 0x0000A000)
 #define APCS_KPSS_CFG_BASE          (KPSS_BASE + 0x00010000)
 #define APCS_KPSS_WDT_BASE          (KPSS_BASE + 0x00017000)
-#define KPSS_APCS_QTMR_AC_BASE      (KPSS_BASE + 0x20000)
-#define KPSS_APCS_F0_QTMR_V1_BASE   (KPSS_BASE + 0x21000)
+#define KPSS_APCS_QTMR_AC_BASE      (KPSS_BASE + 0x00020000)
+#define KPSS_APCS_F0_QTMR_V1_BASE   (KPSS_BASE + 0x00021000)
 #define QTMR_BASE                   KPSS_APCS_F0_QTMR_V1_BASE
 
 #define PERIPH_SS_BASE              0xF9800000
+
+#define MSM_SDC1_BAM_BASE           (PERIPH_SS_BASE + 0x00004000)
 #define MSM_SDC1_BASE               (PERIPH_SS_BASE + 0x00024000)
+#define MSM_SDC1_DML_BASE           (PERIPH_SS_BASE + 0x00024800)
+#define MSM_SDC3_BAM_BASE           (PERIPH_SS_BASE + 0x00044000)
 #define MSM_SDC3_BASE               (PERIPH_SS_BASE + 0x00064000)
+#define MSM_SDC3_DML_BASE           (PERIPH_SS_BASE + 0x00064800)
+#define MSM_SDC2_BAM_BASE           (PERIPH_SS_BASE + 0x00084000)
 #define MSM_SDC2_BASE               (PERIPH_SS_BASE + 0x000A4000)
+#define MSM_SDC2_DML_BASE           (PERIPH_SS_BASE + 0x000A4800)
+#define MSM_SDC4_BAM_BASE           (PERIPH_SS_BASE + 0x000C4000)
 #define MSM_SDC4_BASE               (PERIPH_SS_BASE + 0x000E4000)
+#define MSM_SDC4_DML_BASE           (PERIPH_SS_BASE + 0x000E4800)
+
 #define BLSP1_UART0_BASE            (PERIPH_SS_BASE + 0x0011D000)
 #define BLSP1_UART1_BASE            (PERIPH_SS_BASE + 0x0011E000)
 #define BLSP1_UART2_BASE            (PERIPH_SS_BASE + 0x0011F000)
@@ -59,6 +76,8 @@
 #define MSM_USB_BASE                (PERIPH_SS_BASE + 0x00255000)
 
 #define CLK_CTL_BASE                0xFC400000
+#define USB_HS_BCR                  (CLK_CTL_BASE + 0x480)
+#define USB_BOOT_CLOCK_CTL          (CLK_CTL_BASE + 0x1A00)
 
 #define SPMI_BASE                   0xFC4C0000
 #define SPMI_GENI_BASE              (SPMI_BASE + 0xA000)
@@ -69,9 +88,7 @@
 #define GPIO_IN_OUT_ADDR(x)         (TLMM_BASE_ADDR + 0x1004 + (x)*0x10)
 
 #define MPM2_MPM_CTRL_BASE          0xFC4A1000
-
-
-/* Clock control registers */
+#define MPM2_MPM_PS_HOLD            0xFC4AB000
 
 /* GPLL */
 #define GPLL0_STATUS                (CLK_CTL_BASE + 0x001C)

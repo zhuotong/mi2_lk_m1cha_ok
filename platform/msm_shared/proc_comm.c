@@ -2,7 +2,7 @@
  * Copyright (c) 2008, Google Inc.
  * All rights reserved.
  *
- * Copyright (c) 2009-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2012, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -247,14 +247,17 @@ void mdp_clock_init(unsigned rate)
 {
 	clock_set_rate(MDP_CLK, rate);
 	clock_enable(MDP_CLK);
-	clock_enable(MDP_P_CLK);
 }
 
 void mdp_clock_disable(void)
 {
-	if (!target_cont_splash_screen())
-		clock_disable(MDP_CLK);
-	clock_disable(MDP_P_CLK);
+	clock_disable(MDP_CLK);
+}
+
+void lcdc_clock_disable(void)
+{
+	clock_disable(MDP_LCDC_PAD_PCLK_CLK);
+	clock_disable(MDP_LCDC_PCLK_CLK);
 }
 
 void uart3_clock_init(void)

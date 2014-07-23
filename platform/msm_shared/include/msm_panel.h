@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -9,7 +9,7 @@
  *       copyright notice, this list of conditions and the following
  *       disclaimer in the documentation and/or other materials provided
  *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *     * Neither the name of The Linux Foundation nor the names of its
  *       contributors may be used to endorse or promote products derived
  *       from this software without specific prior written permission.
  *
@@ -73,6 +73,15 @@ struct lcd_panel_info {
 	uint32_t hw_vsync_mode;
 	uint32_t vsync_notifier_period;
 	uint32_t rev;
+};
+
+struct hdmi_panel_info {
+	uint32_t h_back_porch;
+	uint32_t h_front_porch;
+	uint32_t h_pulse_width;
+	uint32_t v_back_porch;
+	uint32_t v_front_porch;
+	uint32_t v_pulse_width;
 };
 
 struct lcdc_panel_info {
@@ -164,6 +173,7 @@ struct msm_panel_info {
 	struct lcdc_panel_info lcdc;
 	struct mipi_panel_info mipi;
 	struct lvds_panel_info lvds;
+	struct hdmi_panel_info hdmi;
 
 	int (*on) (void);
 	int (*off) (void);

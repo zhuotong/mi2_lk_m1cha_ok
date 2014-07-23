@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -10,7 +10,7 @@
  *       copyright notice, this list of conditions and the following
  *       disclaimer in the documentation and/or other materials provided
  *       with the distribution.
- *     * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *     * Neither the name of The Linux Foundation nor the names of its
  *       contributors may be used to endorse or promote products derived
  *       from this software without specific prior written permission.
  *
@@ -39,7 +39,9 @@ static struct board_data board = {UNKNOWN,
 	LINUX_MACHTYPE_UNKNOWN,
 	BASEBAND_MSM,
 	HW_PLATFORM_P0,
-	};
+	0,
+	PMIC_IS_INVALID,
+	0};
 
 static void platform_detect()
 {
@@ -88,8 +90,9 @@ static void platform_detect()
 		board.platform_subtype = board_info_v7.platform_subtype;
 		board.platform_version = board_info_v7.platform_version;
 		board.pmic_model = board_info_v7.pmic_type;
+		board.pmic_type = board_info_v7.pmic_type;
+		board.pmic_version = board_info_v7.pmic_version;
 		board.pmic_die_version = board_info_v7.pmic_version;
-
 	}
 	else
 	{
@@ -162,6 +165,16 @@ uint32_t board_platform_subtype(void)
 uint32_t board_platform_version(void)
 {
 	return board.platform_version;
+}
+
+uint32_t board_pmic_type()
+{
+	return board.pmic_type;
+}
+
+uint32_t board_pmic_ver()
+{
+	return board.pmic_version;
 }
 
 uint32_t board_soc_id(void)

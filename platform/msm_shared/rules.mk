@@ -1,7 +1,7 @@
 LOCAL_DIR := $(GET_LOCAL_DIR)
 
 INCLUDES += \
-			-I$(LOCAL_DIR)/include
+			-I$(LOCAL_DIR)/include -I$(LK_TOP_DIR)/dev/panel/msm
 
 DEFINES += $(TARGET_XRES)
 DEFINES += $(TARGET_YRES)
@@ -36,7 +36,8 @@ ifeq ($(PLATFORM),msm8x60)
 endif
 
 ifeq ($(PLATFORM),msm8960)
-	OBJS += $(LOCAL_DIR)/mipi_dsi.o \
+	OBJS += $(LOCAL_DIR)/hdmi.o \
+			$(LOCAL_DIR)/mipi_dsi.o \
 			$(LOCAL_DIR)/i2c_qup.o \
 			$(LOCAL_DIR)/uart_dm.o \
 			$(LOCAL_DIR)/qgic.o \
@@ -54,20 +55,22 @@ ifeq ($(PLATFORM),msm8960)
 			$(LOCAL_DIR)/display.o \
 			$(LOCAL_DIR)/lvds.o \
 			$(LOCAL_DIR)/mipi_dsi_phy.o \
-			$(LOCAL_DIR)/timer.o
+			$(LOCAL_DIR)/timer.o \
+			$(LOCAL_DIR)/mdp_lcdc.o
 endif
 
 ifeq ($(PLATFORM),copper)
 	OBJS += $(LOCAL_DIR)/qgic.o \
 			$(LOCAL_DIR)/qtimer.o \
-			$(LOCAL_DIR)/qtimer_cp15.o \
+			$(LOCAL_DIR)/qtimer_mmap.o \
 			$(LOCAL_DIR)/interrupts.o \
 			$(LOCAL_DIR)/clock.o \
 			$(LOCAL_DIR)/clock_pll.o \
 			$(LOCAL_DIR)/clock_lib2.o \
 			$(LOCAL_DIR)/uart_dm.o \
 			$(LOCAL_DIR)/board.o \
-			$(LOCAL_DIR)/spmi.o
+			$(LOCAL_DIR)/spmi.o \
+			$(LOCAL_DIR)/bam.o
 endif
 
 ifeq ($(PLATFORM),msm7x27a)
@@ -83,7 +86,9 @@ ifeq ($(PLATFORM),msm7x27a)
 			$(LOCAL_DIR)/interrupts.o \
 			$(LOCAL_DIR)/timer.o \
 			$(LOCAL_DIR)/display.o \
-			$(LOCAL_DIR)/mipi_dsi_phy.o
+			$(LOCAL_DIR)/mipi_dsi_phy.o \
+			$(LOCAL_DIR)/mdp_lcdc.o \
+			$(LOCAL_DIR)/spi.o
 endif
 
 ifeq ($(PLATFORM),msm7k)

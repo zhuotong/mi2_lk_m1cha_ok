@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -9,7 +9,7 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora nor
+ *     * Neither the name of The Linux Foundation nor
  *       the names of its contributors may be used to endorse or promote
  *       products derived from this software without specific prior written
  *       permission.
@@ -36,6 +36,8 @@
 #include <dev/pm8921.h>
 #include <platform/gpio.h>
 #include <sys/types.h>
+#include <board.h>
+#include <smem.h>
 
 #define BITS_IN_ELEMENT(x) (sizeof(x) * 8)
 #define KEYMAP_INDEX(row, col) (row)* BITS_IN_ELEMENT(unsigned int) + (col)
@@ -64,14 +66,28 @@ unsigned int msm8930_qwerty_keymap[] = {
 	[KEYMAP_INDEX(0, 1)] = KEY_VOLUMEDOWN,	/* Volume key on the device/CDP */
 };
 
-unsigned int msm8930_keys_gpiomap[] = {
+unsigned int msm8930_keys_pm8038_gpiomap[] = {
 	[KEYMAP_INDEX(0, 0)] = PM_GPIO(3),	/* Volume key on the device/CDP */
 	[KEYMAP_INDEX(0, 1)] = PM_GPIO(8),	/* Volume key on the device/CDP */
 };
 
-struct qwerty_keypad_info msm8930_qwerty_keypad = {
+unsigned int msm8930_keys_pm8917_gpiomap[] = {
+	[KEYMAP_INDEX(0, 0)] = PM_GPIO(27),	/* Volume key on the device/CDP */
+	[KEYMAP_INDEX(0, 1)] = PM_GPIO(28),	/* Volume key on the device/CDP */
+};
+
+struct qwerty_keypad_info msm8930_pm8038_qwerty_keypad = {
 	.keymap = msm8930_qwerty_keymap,
-	.gpiomap = msm8930_keys_gpiomap,
+	.gpiomap = msm8930_keys_pm8038_gpiomap,
+	.mapsize = ARRAY_SIZE(msm8930_qwerty_keymap),
+	.key_gpio_get = &pm8921_gpio_get,
+	.settle_time = 5 /* msec */ ,
+	.poll_time = 20 /* msec */ ,
+};
+
+struct qwerty_keypad_info msm8930_pm8917_qwerty_keypad = {
+	.keymap = msm8930_qwerty_keymap,
+	.gpiomap = msm8930_keys_pm8917_gpiomap,
 	.mapsize = ARRAY_SIZE(msm8930_qwerty_keymap),
 	.key_gpio_get = &pm8921_gpio_get,
 	.settle_time = 5 /* msec */ ,
@@ -83,15 +99,28 @@ unsigned int apq8064_qwerty_keymap[] = {
 	[KEYMAP_INDEX(0, 1)] = KEY_VOLUMEDOWN,	/* Volume key on the device/CDP */
 };
 
-unsigned int apq8064_keys_gpiomap[] = {
+unsigned int apq8064_pm8921_keys_gpiomap[] = {
 	[KEYMAP_INDEX(0, 0)] = PM_GPIO(1),	/* Volume key on the device/CDP */
 	[KEYMAP_INDEX(0, 1)] = PM_GPIO(2),	/* Volume key on the device/CDP */
 };
 
+unsigned int apq8064_pm8917_keys_gpiomap[] = {
+	[KEYMAP_INDEX(0, 0)] = PM_GPIO(35),	/* Volume key on the device/CDP */
+	[KEYMAP_INDEX(0, 1)] = PM_GPIO(30),	/* Volume key on the device/CDP */
+};
 
-struct qwerty_keypad_info apq8064_qwerty_keypad = {
+struct qwerty_keypad_info apq8064_pm8921_qwerty_keypad = {
 	.keymap = apq8064_qwerty_keymap,
-	.gpiomap = apq8064_keys_gpiomap,
+	.gpiomap = apq8064_pm8921_keys_gpiomap,
+	.mapsize = ARRAY_SIZE(apq8064_qwerty_keymap),
+	.key_gpio_get = &pm8921_gpio_get,
+	.settle_time = 5 /* msec */ ,
+	.poll_time = 20 /* msec */ ,
+};
+
+struct qwerty_keypad_info apq8064_pm8917_qwerty_keypad = {
+	.keymap = apq8064_qwerty_keymap,
+	.gpiomap = apq8064_pm8917_keys_gpiomap,
 	.mapsize = ARRAY_SIZE(apq8064_qwerty_keymap),
 	.key_gpio_get = &pm8921_gpio_get,
 	.settle_time = 5 /* msec */ ,
@@ -106,14 +135,30 @@ void msm8960_keypad_init(void)
 
 void msm8930_keypad_init(void)
 {
+	uint32_t pm_type = board_pmic_type();
+
 	msm8930_keypad_gpio_init();
-	ssbi_gpio_keypad_init(&msm8930_qwerty_keypad);
+
+	if (pm_type == PMIC_IS_PM8917)
+	{
+		ssbi_gpio_keypad_init(&msm8930_pm8917_qwerty_keypad);
+	}
+	else
+	{
+		ssbi_gpio_keypad_init(&msm8930_pm8038_qwerty_keypad);
+	}
 }
 
 void apq8064_keypad_init(void)
 {
+	uint32_t pm_type = board_pmic_type();
+
 	apq8064_keypad_gpio_init();
-	ssbi_gpio_keypad_init(&apq8064_qwerty_keypad);
+
+	if (pm_type == PMIC_IS_PM8917)
+		ssbi_gpio_keypad_init(&apq8064_pm8917_qwerty_keypad);
+	else
+		ssbi_gpio_keypad_init(&apq8064_pm8921_qwerty_keypad);
 }
 
 /* Configure keypad_drv through pwm or DBUS inputs or manually */

@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -10,7 +10,7 @@
  *    copyright notice, this list of conditions and the following
  *    disclaimer in the documentation and/or other materials provided
  *    with the distribution.
- *  * Neither the name of Code Aurora Forum, Inc. nor the names of its
+ *  * Neither the name of The Linux Foundation. nor the names of its
  *    contributors may be used to endorse or promote products derived
  *    from this software without specific prior written permission.
  *
@@ -183,10 +183,10 @@ void gpio_config_uart_dm(uint8_t id)
 
 		case GSBI_ID_5:
 			/* configure rx gpio */
-			gpio_tlmm_config(23, 1, GPIO_INPUT, GPIO_NO_PULL,
+			gpio_tlmm_config(23, 2, GPIO_INPUT, GPIO_NO_PULL,
 							 GPIO_8MA, GPIO_DISABLE);
 			/* configure tx gpio */
-			gpio_tlmm_config(22, 1, GPIO_OUTPUT, GPIO_NO_PULL,
+			gpio_tlmm_config(22, 2, GPIO_OUTPUT, GPIO_NO_PULL,
 							 GPIO_8MA, GPIO_DISABLE);
 			break;
 
@@ -195,6 +195,7 @@ void gpio_config_uart_dm(uint8_t id)
 		}
 	}
 	else if((board_platform_id() == APQ8064) ||
+			(board_platform_id() == APQ8064AA) ||
 			(board_platform_id() == APQ8064AB))
 	{
 		switch (id) {
@@ -346,46 +347,89 @@ static struct pm8xxx_gpio_init pm8921_keypad_gpios_apq[] = {
 	PM8XXX_GPIO_OUTPUT(PM_GPIO(10), 0),
 };
 
+/* pm8917 GPIO configuration for APQ8064 keypad */
+static struct pm8xxx_gpio_init pm8917_keypad_gpios_apq[] = {
+	/* keys GPIOs */
+	PM8XXX_GPIO_INPUT(PM_GPIO(35), PM_GPIO_PULL_UP_31_5),
+	PM8XXX_GPIO_INPUT(PM_GPIO(30), PM_GPIO_PULL_UP_31_5),
+	PM8XXX_GPIO_OUTPUT(PM_GPIO(9), 0),
+};
+
+/* pm8917 GPIO configuration for MSM8930 keypad */
+static struct pm8xxx_gpio_init pm8917_keypad_gpios[] = {
+	/* keys GPIOs */
+	PM8XXX_GPIO_INPUT(PM_GPIO(27), PM_GPIO_PULL_UP_30),
+	PM8XXX_GPIO_INPUT(PM_GPIO(28), PM_GPIO_PULL_UP_30),
+	PM8XXX_GPIO_INPUT(PM_GPIO(36), PM_GPIO_PULL_UP_30),
+	PM8XXX_GPIO_INPUT(PM_GPIO(37), PM_GPIO_PULL_UP_30),
+};
+
 void msm8960_keypad_gpio_init()
 {
-		int i = 0;
-		int num = 0;
+	int i = 0;
+	int num = 0;
 
-		num = ARRAY_SIZE(pm8921_keypad_gpios);
+	num = ARRAY_SIZE(pm8921_keypad_gpios);
 
-		for(i=0; i < num; i++)
-		{
-			pm8921_gpio_config(pm8921_keypad_gpios[i].gpio,
-								&(pm8921_keypad_gpios[i].config));
-		}
+	for(i=0; i < num; i++)
+	{
+		pm8921_gpio_config(pm8921_keypad_gpios[i].gpio,
+							&(pm8921_keypad_gpios[i].config));
+	}
 }
 
 void msm8930_keypad_gpio_init()
 {
-		int i = 0;
-		int num = 0;
+	int i = 0;
+	int num = 0;
+	struct pm8xxx_gpio_init *gpio_array;
+	uint32_t pmic_type;
 
+	pmic_type = board_pmic_type();
+
+	if (pmic_type == PMIC_IS_PM8917)
+	{
+		num = ARRAY_SIZE(pm8917_keypad_gpios);
+		gpio_array = pm8917_keypad_gpios;
+	}
+	else
+	{
 		num = ARRAY_SIZE(pm8038_keypad_gpios);
+		gpio_array = pm8038_keypad_gpios;
+	}
 
-		for(i=0; i < num; i++)
-		{
-			pm8921_gpio_config(pm8038_keypad_gpios[i].gpio,
-								&(pm8038_keypad_gpios[i].config));
-		}
+	for(i=0; i < num; i++)
+	{
+		pm8921_gpio_config(gpio_array[i].gpio,
+							&(gpio_array[i].config));
+	}
 }
 
 void apq8064_keypad_gpio_init()
 {
-		int i = 0;
-		int num = 0;
+	int i = 0;
+	int num = 0;
+	struct pm8xxx_gpio_init *gpio_array;
+	uint32_t pmic_type;
 
+	pmic_type = board_pmic_type();
+
+	if (pmic_type == PMIC_IS_PM8917)
+	{
+		num = ARRAY_SIZE(pm8917_keypad_gpios_apq);
+		gpio_array = pm8917_keypad_gpios_apq;
+	}
+	else
+	{
 		num = ARRAY_SIZE(pm8921_keypad_gpios_apq);
+		gpio_array = pm8921_keypad_gpios_apq;
+	}
 
-		for(i=0; i < num; i++)
-		{
-			pm8921_gpio_config(pm8921_keypad_gpios_apq[i].gpio,
-								&(pm8921_keypad_gpios_apq[i].config));
-		}
+	for(i = 0; i < num; i++)
+	{
+		pm8921_gpio_config(gpio_array[i].gpio,
+							&(gpio_array[i].config));
+	}
 }
 
 void pmic8921_gpio_set(uint32_t gpio, uint32_t level)

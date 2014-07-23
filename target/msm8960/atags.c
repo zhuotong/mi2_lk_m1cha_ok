@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009-2013, The Linux Foundation. All rights reserved.
  * Copyright (c) 2011-2014, Xiaomi Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -8,7 +8,7 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora nor
+ *     * Neither the name of Linux Foundation nor
  *       the names of its contributors may be used to endorse or promote
  *       products derived from this software without specific prior written
  *       permission.
@@ -39,6 +39,7 @@
 #define SIZE_2M     (2 * SIZE_1M)
 #define SIZE_256M   (256 * SIZE_1M)
 #define SIZE_512M   (512 * SIZE_1M)
+#define SIZE_768M   (768 * SIZE_1M)
 
 #define ATAG_MEM            0x54410002
 
@@ -53,8 +54,11 @@ atag_mem_info apq8064_standalone_first_256M[] = {
 	{	.size = (140 * SIZE_1M),
 		.start_addr = PHYS_MEM_START_ADDR + SIZE_2M
 	},
-	{	.size = (60 * SIZE_1M),
-		.start_addr = PHYS_MEM_START_ADDR + (0x9E * SIZE_1M)
+	{	.size = (58 * SIZE_1M),
+		.start_addr = PHYS_MEM_START_ADDR + (0xA0 * SIZE_1M)
+	},
+	{	.size = (4 * SIZE_1M),
+		.start_addr = PHYS_MEM_START_ADDR + (0xEC * SIZE_1M)
 	},
 	{	.size = (7 * SIZE_1M),
 		.start_addr = PHYS_MEM_START_ADDR + (0xF7 * SIZE_1M)
@@ -71,6 +75,9 @@ atag_mem_info apq8064_fusion_first_256M[] = {
 	{	.size = (7 * SIZE_1M),
 		.start_addr = PHYS_MEM_START_ADDR + (0xF7 * SIZE_1M)
 	},
+	{	.size = (4 * SIZE_1M),
+		.start_addr = PHYS_MEM_START_ADDR + (0xEC * SIZE_1M)
+	},
 	{	.size = SIZE_1M,
 		.start_addr = PHYS_MEM_START_ADDR + (0xFF * SIZE_1M)
 	}
@@ -83,8 +90,8 @@ atag_mem_info mpq8064_first_256M[] = {
 	{	.size = (74 * SIZE_1M),
 		.start_addr = PHYS_MEM_START_ADDR + (0x90 * SIZE_1M)
 	},
-	{	.size = (14 * SIZE_1M),
-		.start_addr = PHYS_MEM_START_ADDR + (0xF2 * SIZE_1M)
+	{	.size = (20 * SIZE_1M),
+		.start_addr = PHYS_MEM_START_ADDR + (0xEC * SIZE_1M)
 	}
 };
 
@@ -94,6 +101,20 @@ atag_mem_info msm8960_default_first_256M[] = {
 	}
 };
 
+atag_mem_info msm8930_default_first_256M[] = {
+	{	.size = (140 * SIZE_1M),
+		.start_addr = PHYS_MEM_START_ADDR + SIZE_2M
+	},
+	{	.size = (4 * SIZE_1M),
+		.start_addr = PHYS_MEM_START_ADDR + (0xEC * SIZE_1M)
+	},
+	{	.size = (3 * SIZE_1M),
+		.start_addr = PHYS_MEM_START_ADDR + (0xF8 * SIZE_1M)
+	},
+	{	.size = (1 * SIZE_1M),
+		.start_addr = PHYS_MEM_START_ADDR + (0xFE * SIZE_1M)
+	}
+};
 
 unsigned *target_mem_atag_create(unsigned *ptr, uint32_t size, uint32_t addr)
 {
@@ -126,6 +147,7 @@ unsigned *target_first_256M_atag(unsigned *ptr)
 
 	switch (platform_id) {
 		case APQ8064:
+		case APQ8064AA:
 		case APQ8064AB:
 			if(baseband == BASEBAND_MDM)
 			{
@@ -143,6 +165,24 @@ unsigned *target_first_256M_atag(unsigned *ptr)
 
 		case MPQ8064:
 			ptr = target_atag(ptr, mpq8064_first_256M, ARRAY_SIZE(mpq8064_first_256M));
+			break;
+		case MSM8130:
+		case MSM8230:
+		case MSM8930:
+		case MSM8630:
+		case MSM8130AA:
+		case MSM8230AA:
+		case MSM8630AA:
+		case MSM8930AA:
+		case MSM8930AB:
+		case MSM8630AB:
+		case MSM8230AB:
+		case MSM8130AB:
+		case APQ8030AB:
+		case APQ8030:
+		case APQ8030AA:
+			ptr = target_atag(ptr, msm8930_default_first_256M,
+						ARRAY_SIZE(msm8930_default_first_256M));
 			break;
 		case MSM8960: /* fall through */
 		case MSM8960AB:
@@ -235,5 +275,5 @@ void *target_get_scratch_address(void)
 
 unsigned target_get_max_flash_size(void)
 {
-	return (SIZE_512M);
+	return (SIZE_768M);
 }
