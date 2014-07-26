@@ -51,6 +51,8 @@
 #include <platform.h>
 #include <crypto_hash.h>
 #include <smem.h>
+#include <api_public.h>
+#include "uboot_api/api_private.h"
 
 #if DEVICE_TREE
 #include <libfdt.h>
@@ -1912,6 +1914,9 @@ void aboot_init(const struct app_descriptor *app)
 		read_device_info(&device);
 
 	}
+
+	/* initialize uboot api */
+	api_init();
 
 	target_serialno((unsigned char *) sn_buf);
 	dprintf(SPEW,"serial number: %s\n",sn_buf);
