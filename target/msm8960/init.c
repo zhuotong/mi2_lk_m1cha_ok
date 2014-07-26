@@ -76,7 +76,6 @@ static crypto_engine_type platform_ce_type = CRYPTO_ENGINE_TYPE_SW;
 static void target_uart_init(void);
 unsigned target_check_power_on_reason(void);
 unsigned check_reboot_mode(void);
-static void target_shutdown_for_battinfo(void);
 static void target_shutdown_for_pwrkey(void);
 
 void target_early_init(void)
@@ -115,7 +114,6 @@ void target_init(void)
 
 	pm8921_init(&pmic);
 
-	target_shutdown_for_battinfo();
 	target_shutdown_for_pwrkey();
 
 	/* Keypad init */
@@ -270,17 +268,6 @@ unsigned target_check_ddrinfo(void)
 
 	dprintf(INFO, "ddrinfo 0x%x\n", ddrinfo);
 	return ddrinfo;
-}
-
-static void target_shutdown_for_battinfo(void)
-{
-	unsigned battinfo = 0;
-
-	battinfo = target_check_battinfo();
-	if (battinfo == 0x10) {
-		dprintf(INFO, "Battery is weak and no charger\n");
-		shutdown_device();
-	}
 }
 
 static void target_shutdown_for_pwrkey(void)
